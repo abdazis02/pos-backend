@@ -86,7 +86,29 @@ const ReportController = {
         console.warn("PPOB Data Fetch Skip:", e.message);
       }
 
-      // 3. EXECUTE ALL QUERIES
+      // 🔥 3. RECENT ACTIVITIES (GABUNGAN POS + PPOB)
+      const recentTransactions = await req.db("transactions").where({ store_id, payment_status: 'paid' })
+        .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
+        .select('created_at', req.db.raw('"POS" as source'), 'payment_method as type', 'total_cost as amount')
+        .orderBy('created_at', 'desc')
+        .limit(10);
+
+      let recentPpob = [];
+      try {
+        if (await req.db.schema.hasTable('ppob_orders')) {
+          recentPpob = await req.db("ppob_orders").where({ store_id, status: 'success' })
+            .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
+            .select('created_at', req.db.raw('"PPOB" as source'), 'buyer_sku_code as type', 'sale_price as amount')
+            .orderBy('created_at', 'desc')
+            .limit(10);
+        }
+      } catch (e) {}
+
+      const combinedRecent = [...recentTransactions, ...recentPpob]
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        .slice(0, 15);
+
+      // 4. EXECUTE ALL QUERIES
       const [cashSummary, hppRows, dailyStats, topProducts, stokMenipis] = await Promise.all([
         cashSummaryQuery,
         hppRowsQuery,
@@ -143,7 +165,8 @@ const ReportController = {
         avg_daily: dailyValues.length ? Math.round(total_pendapatan / dailyValues.length) : 0,
         daily_list: finalDailyStats,
         top_products: topProducts,
-        stok_menipis: stokMenipis
+        stok_menipis: stokMenipis,
+        recent_activities: combinedRecent // 🔥 Masukkan data ini ke response
       });
 
     } catch (error) {
