@@ -279,14 +279,25 @@ const PPOBController = {
 
       // Mapping Kategori
       let searchCategory = category;
-      if (category === 'PLN Token' || category === 'PLN Pasca') {
+      let searchType = undefined;
+
+      if (category === 'PLN Token' || category === 'PLN Pasca' || category === 'PLN Tagihan') {
         searchCategory = 'PLN';
-      } else if (category === 'E-Money' || category === 'E-Money Tagihan') {
+      } else if (category === 'E-Money' || category === 'E-Money Bebas Nominal' || category === 'E-Money Tagihan') {
         searchCategory = 'E-Money';
+        // 🔥 Jika request dari tab "Bebas Nominal" (Pascabayar), filter hanya yang type pascabayar
+        if (category === 'E-Money Bebas Nominal' || category === 'E-Money Tagihan') {
+          searchType = 'postpaid';
+        } else {
+          searchType = 'prepaid';
+        }
       }
 
-      // 1. CEK APAKAH HARUS PAKSA SYNC (Manual atau jika data kosong)
-      let products = await PPOBProductModel.getAllProducts({ category: searchCategory || undefined });
+      // 1. CEK APAKAH HARUS PAKSA SYNC
+      let products = await PPOBProductModel.getAllProducts({
+        category: searchCategory || undefined,
+        type: searchType
+      });
 
       if (products.length === 0 || force_sync === 'true') {
         console.log(`🔄 Memulai Sinkronisasi Produk [Kategori: ${searchCategory || 'ALL'}]...`);
