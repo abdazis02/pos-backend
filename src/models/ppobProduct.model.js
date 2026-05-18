@@ -4,6 +4,11 @@ const PPOBProductModel = {
   async getAllProducts(filters = {}) {
     let query = master('ppob_products').where('is_active', true);
 
+    // 🔥 FIX: Filter produk administratif yang tidak untuk dijual (Cek Nama/Inquiry)
+    query = query.whereNot('product_name', 'like', '%Cek Nama%')
+                 .whereNot('product_name', 'like', '%Inquiry%')
+                 .whereNot('product_name', 'like', '%Cek Pengguna%');
+
     if (filters.type) {
       query = query.where('type', filters.type);
     }
