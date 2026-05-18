@@ -18,30 +18,6 @@ const ReportController = {
         cashSummaryQuery.where({ payment_method })
       }
 
-      // 🔥 2. PPOB SUMMARY (Safe Query)
-      let ppobSummary = { total_transaksi: 0, total_pendapatan: 0, total_profit: 0 };
-      let ppobDaily = [];
-
-      try {
-        const hasPpobTable = await req.db.schema.hasTable('ppob_orders');
-        if (hasPpobTable) {
-          ppobSummary = await req.db("ppob_orders").where({ store_id, status: 'success' })
-            .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
-            .select(req.db.raw('COUNT(*) as total_transaksi'))
-            .select(req.db.raw('CAST(SUM(sale_price) AS DECIMAL(18,2)) AS total_pendapatan'))
-            .select(req.db.raw('CAST(SUM(sale_price - price) AS DECIMAL(18,2)) AS total_profit'))
-            .first() || ppobSummary;
-
-          ppobDaily = await req.db("ppob_orders").where({ store_id, status: 'success' })
-            .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
-            .select(req.db.raw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) as day'))
-            .select(req.db.raw('SUM(sale_price) as total'))
-            .groupBy('day');
-        }
-      } catch (ppobErr) {
-        console.warn("⚠️ PPOB Table not ready or error:", ppobErr.message);
-      }
-
       // HPP/modal (totalCost) dari produk yang terjual
       const hppRowsQuery = req.db("transaction_items as ti").where('t.store_id', store_id)
         .whereRaw('DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) <= ?', [start, end])
