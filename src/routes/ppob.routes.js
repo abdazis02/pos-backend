@@ -13,6 +13,14 @@ router.post(
   PPOBController.purchase
 );
 
+router.post(
+  '/:store_id/ppob/inquiry', // 🔥 Route baru untuk Cek Tagihan
+  authMiddleware(['owner', 'admin', 'cashier']),
+  tenantResolver,
+  checkStore,
+  PPOBController.inquiry
+);
+
 router.get(
   '/:store_id/ppob/orders',
   authMiddleware(['owner', 'admin', 'cashier']),

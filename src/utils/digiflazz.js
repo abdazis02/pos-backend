@@ -71,14 +71,14 @@ function findProductBySku(products, buyer_sku_code) {
 }
 
 async function productList(buyer_sku_code = null) {
-  const payload = { cmd: 'prepaid', ref_id: 'pricelist' }
+  // 🔥 Sync both Prepaid & Postpaid categories
+  const prepaidResult = await sendDigiflazzRequest('price-list', { cmd: 'prepaid', code: buyer_sku_code || undefined });
+  const postpaidResult = await sendDigiflazzRequest('price-list', { cmd: 'postpaid', code: buyer_sku_code || undefined });
 
-  if (buyer_sku_code) {
-    payload.code = buyer_sku_code;
-  }
+  const prepaidList = normalizeDigiflazzProductList(prepaidResult);
+  const postpaidList = normalizeDigiflazzProductList(postpaidResult);
 
-  const result = await sendDigiflazzRequest('price-list', payload);
-  return normalizeDigiflazzProductList(result);
+  return [...prepaidList, ...postpaidList];
 }
 
 async function getProductDetail(buyer_sku_code) {
@@ -91,9 +91,31 @@ async function purchase({ buyer_sku_code, customer_no, ref_id }) {
     throw new Error('buyer_sku_code, dan customer_no wajib diisi');
   }
 
-  return sendDigiflazzRequest('transaction', {
-    testing: process.env.NODE_ENV == 'development',
+  // 🔥 DETEKSI OTOMATIS: Ambil detail produk untuk menentukan cmd (prepaid/postpaid)
+  const product = await getProductDetail(buyer_sku_code);
+  const isPostpaid = product?.category?.toLowerCase().includes('pascabayar') ||
+                     product?.type?.toLowerCase().includes('pascabayar') ||
+                     ['PLN PASCABAYAR', 'PDAM', 'BPJS', 'TELKOM'].includes(product?.brand?.toUpperCase());
+
+  const payload = {
+    testing: process.env.NODE_ENV !== 'production',
     cb_url: process.env.URL + '/api/webhook/digiflazz',
+    buyer_sku_code,
+    customer_no,
+    ref_id,
+  };
+
+  // Jika pascabayar, gunakan endpoint 'pay-pasca', jika prabayar gunakan 'transaction'
+  const endpoint = isPostpaid ? 'pay-pasca' : 'transaction';
+
+  return sendDigiflazzRequest(endpoint, payload);
+}
+
+/**
+ * 🔥 Tambahan fungsi Cek Tagihan (Inquiry) khusus Pascabayar
+ */
+async function checkInquiry({ buyer_sku_code, customer_no, ref_id }) {
+  return sendDigiflazzRequest('inq-pasca', {
     buyer_sku_code,
     customer_no,
     ref_id,
@@ -104,4 +126,5 @@ module.exports = {
   purchase,
   productList,
   getProductDetail,
+  checkInquiry, // Export fungsi baru
 };

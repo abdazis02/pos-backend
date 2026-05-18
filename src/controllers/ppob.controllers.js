@@ -53,6 +53,30 @@ const listSchema = Joi.object({
 });
 
 const PPOBController = {
+  /**
+   * 🔥 Fitur Cek Tagihan Pascabayar (Inquiry)
+   */
+  async inquiry(req, res) {
+    try {
+      const { buyer_sku_code, customer_no } = req.body;
+      const ref_id = `INQ-${req.user.tenant_id}-${Date.now()}`;
+
+      const result = await Digiflazz.checkInquiry({
+        buyer_sku_code,
+        customer_no,
+        ref_id
+      });
+
+      if (String(result?.data?.rc) !== '00') {
+        return response.badRequest(res, result?.data?.message || 'Gagal cek tagihan');
+      }
+
+      return response.success(res, result.data, 'Tagihan berhasil ditemukan');
+    } catch (error) {
+      return response.error(res, error, 'Gagal melakukan inquiry pascabayar');
+    }
+  },
+
   async purchase(req, res) {
     const trxMaster = await master.transaction();
     const trxTenant = await req.db.transaction();
@@ -254,18 +278,18 @@ const PPOBController = {
       const { category } = req.query;
       let products = await PPOBProductModel.getAllProducts({ category: category || undefined });
 
-      // 🔥 AUTO-SYNC: Jika produk di database kosong, tarik otomatis dari Digiflazz
+      // 🔥 AUTO-SYNC GLOBAL: Jika kategori yang diminta kosong di database, tarik semua dari Digiflazz
       if (products.length === 0) {
-        console.log("🔄 PPOB Products empty, triggering auto-sync...");
+        console.log(`🔄 PPOB Category [${category}] empty, triggering global auto-sync...`);
         try {
           const allProducts = await Digiflazz.productList();
           if (allProducts && allProducts.length > 0) {
             await PPOBProductModel.createOrUpdateProducts(allProducts);
-            // Ambil ulang setelah sync
+            // Ambil ulang data spesifik kategori setelah sync global
             products = await PPOBProductModel.getAllProducts({ category: category || undefined });
           }
         } catch (syncErr) {
-          console.error("❌ Auto-sync failed:", syncErr.message);
+          console.error("❌ Global Auto-sync failed:", syncErr.message);
         }
       }
 
