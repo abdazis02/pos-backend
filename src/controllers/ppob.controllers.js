@@ -252,7 +252,23 @@ const PPOBController = {
   async listProducts(req, res) {
     try {
       const { category } = req.query;
-      const products = await PPOBProductModel.getAllProducts({ category: category || undefined });
+      let products = await PPOBProductModel.getAllProducts({ category: category || undefined });
+
+      // 🔥 AUTO-SYNC: Jika produk di database kosong, tarik otomatis dari Digiflazz
+      if (products.length === 0) {
+        console.log("🔄 PPOB Products empty, triggering auto-sync...");
+        try {
+          const allProducts = await Digiflazz.productList();
+          if (allProducts && allProducts.length > 0) {
+            await PPOBProductModel.createOrUpdateProducts(allProducts);
+            // Ambil ulang setelah sync
+            products = await PPOBProductModel.getAllProducts({ category: category || undefined });
+          }
+        } catch (syncErr) {
+          console.error("❌ Auto-sync failed:", syncErr.message);
+        }
+      }
+
       return response.success(res, { items: products }, 'Produk PPOB berhasil diambil');
     } catch (error) {
       console.error('PPOB product list error:', error);
