@@ -275,33 +275,31 @@ const PPOBController = {
 
   async listProducts(req, res) {
     try {
-      let { category } = req.query;
+      let { category, force_sync } = req.query;
 
-      // 🔥 FIX: Mapping Kategori agar sinkron antara Flutter & Digiflazz
+      // Mapping Kategori
       let searchCategory = category;
       if (category === 'PLN Token' || category === 'PLN Pasca') {
         searchCategory = 'PLN';
       } else if (category === 'E-Money') {
-        // Digiflazz terkadang menggunakan 'E-Money' atau 'E-MONEY'
         searchCategory = 'E-Money';
       }
 
-      // Ambil data lokal dulu
+      // 1. CEK APAKAH HARUS PAKSA SYNC (Manual atau jika data kosong)
       let products = await PPOBProductModel.getAllProducts({ category: searchCategory || undefined });
 
-      // 🔥 AUTO-SYNC CERDAS: Jika kategori spesifik masih kosong, paksa tarik dari server
-      if (products.length === 0) {
-        console.log(`🔄 Kategori [${searchCategory}] kosong di lokal, memulai Sinkronisasi Digiflazz...`);
+      if (products.length === 0 || force_sync === 'true') {
+        console.log(`🔄 Memulai Sinkronisasi Produk [Kategori: ${searchCategory || 'ALL'}]...`);
         try {
           const allProducts = await Digiflazz.productList();
           if (allProducts && allProducts.length > 0) {
             await PPOBProductModel.createOrUpdateProducts(allProducts);
-            // Ambil ulang setelah sinkronisasi berhasil
+            // Ambil ulang data terbaru
             products = await PPOBProductModel.getAllProducts({ category: searchCategory || undefined });
-            console.log(`✅ Berhasil menarik ${allProducts.length} produk (termasuk PLN & E-Money)`);
+            console.log(`✅ Sinkronisasi Berhasil. Total: ${allProducts.length} produk.`);
           }
         } catch (syncErr) {
-          console.error("❌ Gagal Sinkronisasi Otomatis:", syncErr.message);
+          console.error("❌ Gagal Sinkronisasi Digiflazz:", syncErr.message);
         }
       }
 
