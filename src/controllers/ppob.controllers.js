@@ -276,20 +276,23 @@ const PPOBController = {
   async listProducts(req, res) {
     try {
       const { category } = req.query;
+
+      // Ambil data lokal dulu
       let products = await PPOBProductModel.getAllProducts({ category: category || undefined });
 
-      // 🔥 AUTO-SYNC GLOBAL: Jika kategori yang diminta kosong di database, tarik semua dari Digiflazz
+      // 🔥 AUTO-SYNC CERDAS: Jika kategori spesifik (PLN/E-Money) masih kosong, paksa tarik dari server
       if (products.length === 0) {
-        console.log(`🔄 PPOB Category [${category}] empty, triggering global auto-sync...`);
+        console.log(`🔄 Kategori [${category}] kosong di lokal, memulai Sinkronisasi Digiflazz...`);
         try {
           const allProducts = await Digiflazz.productList();
           if (allProducts && allProducts.length > 0) {
             await PPOBProductModel.createOrUpdateProducts(allProducts);
-            // Ambil ulang data spesifik kategori setelah sync global
+            // Ambil ulang setelah sinkronisasi berhasil
             products = await PPOBProductModel.getAllProducts({ category: category || undefined });
+            console.log(`✅ Berhasil menarik ${allProducts.length} produk (termasuk PLN & E-Money)`);
           }
         } catch (syncErr) {
-          console.error("❌ Global Auto-sync failed:", syncErr.message);
+          console.error("❌ Gagal Sinkronisasi Otomatis:", syncErr.message);
         }
       }
 

@@ -71,9 +71,18 @@ function findProductBySku(products, buyer_sku_code) {
 }
 
 async function productList(buyer_sku_code = null) {
-  // 🔥 Sync both Prepaid & Postpaid categories
-  const prepaidResult = await sendDigiflazzRequest('price-list', { cmd: 'prepaid', code: buyer_sku_code || undefined });
-  const postpaidResult = await sendDigiflazzRequest('price-list', { cmd: 'postpaid', code: buyer_sku_code || undefined });
+  // 🔥 FIX: Tambahkan ref_id agar 'sign' (signature) dibuat otomatis oleh sendDigiflazzRequest
+  const prepaidResult = await sendDigiflazzRequest('price-list', {
+    cmd: 'prepaid',
+    ref_id: 'pricelist',
+    code: buyer_sku_code || undefined
+  });
+
+  const postpaidResult = await sendDigiflazzRequest('price-list', {
+    cmd: 'postpaid',
+    ref_id: 'pricelist',
+    code: buyer_sku_code || undefined
+  });
 
   const prepaidList = normalizeDigiflazzProductList(prepaidResult);
   const postpaidList = normalizeDigiflazzProductList(postpaidResult);
