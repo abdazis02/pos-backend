@@ -91,7 +91,7 @@ const ReportController = {
         hppRowsQuery,
         dailyStatsQuery,
         topProductsQuery,
-        stokMenipisQuery // 🔥 Fix typo was here
+        stokMenipisQuery
       ]);
 
       // --- MENGGABUNGKAN DATA ---
@@ -153,58 +153,107 @@ const ReportController = {
       const { store_id } = req.params;
       const { start, end } = req.query;
 
-      // Total produk
-      const products = await req.db("products")
+      // 1. Total Jenis Produk Fisik di Toko
+      const productsCount = await req.db("products")
         .count({ total: '*' })
         .where({ store_id })
-        .first()
+        .first();
 
-      // Total produk terjual
+      // 2. Hitung Total Produk Terjual (POS Fisik + PPOB Digital)
       let totalSold = 0;
+      let ppobSold = 0;
+      let cashierSold = 0;
+
       if (start && end) {
+        // Hitung dari kasir POS
         const sold = await req.db("transaction_items as ti")
           .join("transactions as t", "t.id", "ti.transaction_id")
           .select(req.db.raw("SUM(COALESCE(ti.qty, 0)) as total"))
-          .whereBetween('t.created_at', [start, end])
+          .whereRaw('DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) <= ?', [start, end])
           .where('t.store_id', store_id)
           .first();
+        cashierSold = parseInt(sold.total || 0);
 
-        totalSold = parseInt(sold.total || 0);
+        // Hitung dari PPOB (Safe Fetch)
+        try {
+          const hasPpobTable = await req.db.schema.hasTable('ppob_orders');
+          if (hasPpobTable) {
+            const pSold = await req.db("ppob_orders")
+              .count({ total: '*' })
+              .where({ store_id, status: 'success' })
+              .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
+              .first();
+            ppobSold = parseInt(pSold.total || 0);
+          }
+        } catch (e) {
+          console.warn("PPOB Sold Count Skip:", e.message);
+        }
+
+        totalSold = cashierSold + ppobSold;
       }
 
-      // Top produk (dengan revenue)
-      const topProducts = req.db("transaction_items as ti")
-        .select(req.db.raw('ti.product_id, p.sku, p.name, SUM(ti.qty) AS sold, SUM(ti.qty * ti.price) AS revenue'))
+      // 3. Ambil Top 10 Produk Terjual dari Kasir POS
+      const topProductsQuery = req.db("transaction_items as ti")
+        .select(req.db.raw('ti.product_id, p.sku, p.name, CAST(SUM(ti.qty) AS SIGNED) AS sold, CAST(SUM(ti.qty * ti.price) AS DECIMAL(18,2)) AS revenue'))
         .join("products as p", "p.id", "ti.product_id")
         .join("transactions as t", "t.id", "ti.transaction_id")
         .where('t.store_id', store_id)
         .groupBy(['ti.product_id', 'p.sku', 'p.name'])
         .orderBy('sold', 'desc')
         .limit(10);
+
       if (start && end) {
-        topProducts.whereBetween('t.created_at', [start, end])
+        topProductsQuery.whereRaw('DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) <= ?', [start, end]);
+      }
+      const cashierTopProducts = await topProductsQuery;
+
+      // 4. Ambil Top Produk dari PPOB (Jika ada tabelnya) dan Gabungkan ke List
+      let finalTopProducts = [...cashierTopProducts];
+      try {
+        const hasPpobTable = await req.db.schema.hasTable('ppob_orders');
+        if (hasPpobTable) {
+          const ppobTopQuery = req.db("ppob_orders")
+            .select(req.db.raw('"PPOB" as product_id, product_code as sku, product_name as name, CAST(COUNT(*) AS SIGNED) as sold, CAST(SUM(sale_price) AS DECIMAL(18,2)) as revenue'))
+            .where({ store_id, status: 'success' })
+            .groupBy(['product_code', 'product_name'])
+            .orderBy('sold', 'desc')
+            .limit(5);
+
+          if (start && end) {
+            ppobTopQuery.whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end]);
+          }
+          const ppobTopProducts = await ppobTopQuery;
+          
+          // Gabungkan list produk fisik & PPOB lalu urutkan ulang berdasarkan yang paling laku (sold)
+          finalTopProducts = [...finalTopProducts, ...ppobTopProducts]
+            .sort((a, b) => b.sold - a.sold)
+            .slice(0, 10); // Tetap ambil top 10 setelah digabung
+        }
+      } catch (e) {
+        console.warn("PPOB Top Products Skip:", e.message);
       }
 
-      // Stok menipis
+      // 5. Informasi Stok Menipis & Habis (Hanya Produk Fisik)
       const stokMenipis = await req.db("products")
         .select(['id', 'name', 'stock as remaining'])
         .where({ store_id })
+        .where('stock', '>', 0)
         .where('stock', '<=', 5);
 
-      // Stok habis
       const stokHabis = await req.db("products")
         .where({ store_id, stock: 0 })
         .count({ total: '*' })
         .first();
 
       return response.success(res, {
-        total_products: products.total,
+        total_products: productsCount.total,
         total_sold: totalSold,
-        top_products: await topProducts,
+        top_products: finalTopProducts, // Data gabungan POS + PPOB yang rapi
         stok_menipis: stokMenipis,
         stok_habis: stokHabis.total
       });
     } catch (err) {
+      console.error("❌ Product Report Error:", err);
       return response.error(res, err, 'Gagal mengambil laporan produk');
     }
   },
@@ -267,7 +316,7 @@ const ReportController = {
 
       if (!date) return response.badRequest(res, 'Tanggal laporan wajib diisi.');
 
-      // Cek jika sudah ada laporan hari ini
+      // 1. Cek jika sudah ada laporan hari ini
       const [exist] = await req.db.raw(
         `SELECT id FROM daily_reports WHERE store_id = ? AND report_date = ?`,
         [store_id, date]
@@ -276,14 +325,14 @@ const ReportController = {
         return response.badRequest(res, 'Laporan harian sudah ada untuk tanggal ini.');
       }
 
-      // Ambil data summary seperti di summary() (DISKON DISET 0)
+      // 2. Ambil data dari Kasir POS (Perbaikan zona waktu dan ambil data diskon asli)
       const [summary] = await req.db.raw(
         `SELECT 
             COUNT(*) AS total_transaksi, 
             COALESCE(SUM(total_cost),0) AS total_pendapatan,
-            0 AS total_diskon
+            COALESCE(SUM(discount_total),0) AS total_diskon
          FROM transactions
-         WHERE store_id = ? AND DATE(created_at) = ?`,
+         WHERE store_id = ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) = ?`,
         [store_id, date]
       );
 
@@ -291,39 +340,65 @@ const ReportController = {
         `SELECT COALESCE(SUM(ti.cost_price * ti.qty), 0) AS total_hpp
          FROM transaction_items ti
          JOIN transactions t ON ti.transaction_id = t.id
-         WHERE t.store_id = ? AND DATE(t.created_at) = ?`,
+         WHERE t.store_id = ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) = ?`,
         [store_id, date]
       );
 
-      const total_hpp = Number(hppRows[0].total_hpp) || 0;
+      // 3. Ambil data dari PPOB Digital
+      let ppob_transaksi = 0;
+      let ppob_pendapatan = 0;
+      let ppob_profit = 0;
 
-      // Statistik harian (hanya 1 hari)
-      const total_pendapatan = Number(summary[0].total_pendapatan) || 0;
+      try {
+        const hasPpobTable = await req.db.schema.hasTable('ppob_orders');
+        if (hasPpobTable) {
+          const [ppobSummary] = await req.db.raw(
+            `SELECT 
+                COUNT(*) AS total_transaksi,
+                COALESCE(SUM(sale_price), 0) AS total_pendapatan,
+                COALESCE(SUM(sale_price - price), 0) AS total_profit
+             FROM ppob_orders
+             WHERE store_id = ? AND status = 'success' AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) = ?`,
+            [store_id, date]
+          );
+          
+          ppob_transaksi = Number(ppobSummary[0]?.total_transaksi) || 0;
+          ppob_pendapatan = parseFloat(ppobSummary[0]?.total_pendapatan) || 0;
+          ppob_profit = parseFloat(ppobSummary[0]?.total_profit) || 0;
+        }
+      } catch (e) {
+        console.warn("PPOB Fetch di Daily Report Skip:", e.message);
+      }
+
+      // 4. Gabungkan Data (POS + PPOB)
+      const total_hpp = Number(hppRows[0].total_hpp) || 0;
+      
+      const total_transaksi = (Number(summary[0].total_transaksi) || 0) + ppob_transaksi;
+      const total_pendapatan_kasir = Number(summary[0].total_pendapatan) || 0;
+      const total_pendapatan = total_pendapatan_kasir + ppob_pendapatan;
       const total_diskon = Number(summary[0].total_diskon) || 0;
+
       const net_revenue = total_pendapatan - total_diskon;
-      const gross_profit = net_revenue - total_hpp;
+      // Rumus Profit: Profit Kasir (Pendapatan - Diskon - Modal/HPP) ditambah Profit PPOB
+      const gross_profit = (total_pendapatan_kasir - total_diskon - total_hpp) + ppob_profit;
       const operational_cost = 0; // default
       const net_profit = gross_profit - operational_cost;
-      const marginValue =
-        net_revenue > 0
-          ? (gross_profit / net_revenue) * 100
-          : 0;
-
+      
+      const marginValue = net_revenue > 0 ? (gross_profit / net_revenue) * 100 : 0;
       const margin = `${marginValue.toFixed(2)}%`;
 
-      // Untuk best_sales_day, lowest_sales_day, avg_daily (hanya 1 hari, jadi sama)
       const best_sales_day = total_pendapatan;
       const lowest_sales_day = total_pendapatan;
       const avg_daily = total_pendapatan;
 
-      // Simpan ke tabel daily_reports
+      // 5. Simpan Hasil Gabungan ke tabel daily_reports
       await req.db.raw(
         `INSERT INTO daily_reports 
         (store_id, report_date, total_transactions, total_income, total_discount, net_revenue, total_hpp, gross_profit, operational_cost, net_profit, margin, best_sales_day, lowest_sales_day, avg_daily)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           store_id, date,
-          summary[0].total_transaksi,
+          total_transaksi,
           total_pendapatan,
           total_diskon,
           net_revenue,
@@ -338,16 +413,17 @@ const ReportController = {
         ]
       );
 
-      // Logging aktivitas: generate laporan harian
+      // Logging aktivitas
       await ActivityLogModel.create(req.db, {
         user_id: req.user.id,
         store_id: store_id,
         action: 'generate_daily_report',
-        detail: `Generate laporan harian untuk tanggal ${date}`
+        detail: `Generate laporan harian (POS+PPOB) untuk tanggal ${date}`
       });
 
       return response.success(res, { message: 'Laporan harian berhasil disimpan.' });
     } catch (err) {
+      console.error("❌ Generate Daily Report Error:", err);
       return response.error(res, err, 'Gagal generate laporan harian');
     }
   },
