@@ -78,6 +78,30 @@ const ReportController = {
         .select('id', 'name', 'stock as remaining')
         .where('stock', '<=', 5);
 
+      // 🔥 FIX FINAL: Jalankan query PPOB secara independen agar tidak mengunci Promise.all
+      let ppobSummary = { total_transaksi: 0, total_pendapatan: 0, total_profit: 0 };
+      let ppobDaily = [];
+
+      try {
+        const hasPpobTable = await req.db.schema.hasTable('ppob_orders');
+        if (hasPpobTable) {
+          const pSum = await req.db("ppob_orders").where({ store_id, status: 'success' })
+            .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
+            .select(req.db.raw('COUNT(*) as total_transaksi'))
+            .select(req.db.raw('COALESCE(SUM(sale_price), 0) AS total_pendapatan'))
+            .select(req.db.raw('COALESCE(SUM(sale_price - price), 0) AS total_profit'))
+            .first();
+
+          if (pSum) ppobSummary = pSum;
+
+          ppobDaily = await req.db("ppob_orders").where({ store_id, status: 'success' })
+            .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
+            .select(req.db.raw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) as day'))
+            .select(req.db.raw('SUM(sale_price) as total'))
+            .groupBy('day');
+        }
+      } catch (e) { console.warn("PPOB Data Fetch Skip:", e.message); }
+
       const [cashSummary, hppRows, dailyStats, topProducts, stokMenipis] = await Promise.all([
         cashSummaryQuery, hppRowsQuery, dailyStatsQuery, topProductsQuery, stokMenipisQuery
       ]);
