@@ -1,0 +1,13 @@
+{
+  "Eksklusif": {
+    "product_limit": 20000,
+    "user_limit": 25,
+    "image_limit": 5000,
+    "role_limits": {
+      "owner": 1,
+      "admin": 5,
+      "cashier": 20,
+      "user": 25
+    }
+  }
+}
