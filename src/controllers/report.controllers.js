@@ -7,7 +7,7 @@ const ReportController = {
       const { store_id } = req.params;
       const { start, end, payment_method } = req.query;
 
-      // 🔥 1. KASIR SUMMARY
+      // 1. KASIR SUMMARY
       const cashSummaryQuery = req.db("transactions").where({ store_id })
         .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
         .select(req.db.raw('COUNT(*) as total_transaksi'))
@@ -54,7 +54,7 @@ const ReportController = {
         .select('id', 'name', 'stock as remaining')
         .where('stock', '<=', 5);
 
-      // 🔥 FIX FINAL: Jalankan query PPOB secara independen agar tidak mengunci Promise.all
+      // --- PPOB DATA (SAFE FETCH) ---
       let ppobSummary = { total_transaksi: 0, total_pendapatan: 0, total_profit: 0 };
       let ppobDaily = [];
 
@@ -68,7 +68,13 @@ const ReportController = {
             .select(req.db.raw('COALESCE(SUM(sale_price - price), 0) AS total_profit'))
             .first();
 
-          if (pSum) ppobSummary = pSum;
+          if (pSum) {
+            ppobSummary = {
+              total_transaksi: Number(pSum.total_transaksi) || 0,
+              total_pendapatan: parseFloat(pSum.total_pendapatan) || 0,
+              total_profit: parseFloat(pSum.total_profit) || 0
+            };
+          }
 
           ppobDaily = await req.db("ppob_orders").where({ store_id, status: 'success' })
             .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
@@ -76,49 +82,46 @@ const ReportController = {
             .select(req.db.raw('SUM(sale_price) as total'))
             .groupBy('day');
         }
-      } catch (e) { console.warn("PPOB Data Fetch Skip:", e.message); }
+      } catch (e) {
+        console.warn("PPOB Data Fetch Skip:", e.message);
+      }
 
       const [cashSummary, hppRows, dailyStats, topProducts, stokMenipis] = await Promise.all([
-        cashSummaryQuery, hppRowsQuery, dailyStatsQuery, topProductsQuery, stokMenipisQuery
+        cashSummaryQuery,
+        hppRowsQuery,
+        dailyStatsQuery,
+        topProductsQuery,
+        stokMenipisQuery // 🔥 Fix typo was here
       ]);
 
       // --- MENGGABUNGKAN DATA ---
-      const total_transaksi = (Number(cashSummary.total_transaksi) || 0) + (Number(ppobSummary.total_transaksi) || 0);
+      const total_transaksi = (Number(cashSummary.total_transaksi) || 0) + ppobSummary.total_transaksi;
       const total_pendapatan_kasir = parseFloat(cashSummary.total_pendapatan) || 0;
-      const total_pendapatan_ppob = parseFloat(ppobSummary.total_pendapatan) || 0;
-      const total_pendapatan = total_pendapatan_kasir + total_pendapatan_ppob;
+      const total_pendapatan = total_pendapatan_kasir + ppobSummary.total_pendapatan;
 
       const total_diskon = parseFloat(cashSummary.total_diskon) || 0;
-      const total_hpp_kasir = hppRows.total_hpp || 0;
-      const profit_ppob = parseFloat(ppobSummary.total_profit) || 0;
+      const total_hpp_kasir = parseFloat(hppRows.total_hpp) || 0;
 
-      // Gabungkan statistik harian untuk grafik
+      // Gabungkan statistik harian
       const combinedDailyMap = {};
-      dailyStats.forEach(d => { combinedDailyMap[d.day] = (combinedDailyMap[d.day] || 0) + Number(d.total); });
-      ppobDaily.forEach(d => { combinedDailyMap[d.day] = (combinedDailyMap[d.day] || 0) + Number(d.total); });
+      (dailyStats || []).forEach(d => { combinedDailyMap[d.day] = (combinedDailyMap[d.day] || 0) + Number(d.total); });
+      (ppobDaily || []).forEach(d => { combinedDailyMap[d.day] = (combinedDailyMap[d.day] || 0) + Number(d.total); });
 
       const finalDailyStats = Object.keys(combinedDailyMap).map(day => ({
         day,
         total: combinedDailyMap[day]
-      })).sort((a,b) => a.day.localeCompare(b.day));
+      })).sort((a, b) => a.day.localeCompare(b.day));
 
       const dailyTotals = finalDailyStats.map(r => Number(r.total));
-      const bestSalesDay = dailyTotals.length ? Math.max(...dailyTotals) : 0;
-      const lowestSalesDay = dailyTotals.length ? Math.min(...dailyTotals) : 0;
+      const bestSalesDay = dailyTotals.length ? finalDailyStats.reduce((a, b) => (a.total > b.total ? a : b)).day : '-';
+      const lowestSalesDay = dailyTotals.length ? finalDailyStats.reduce((a, b) => (a.total < b.total ? a : b)).day : '-';
 
-      const avgDaily = dailyTotals.length
-        ? Math.round(total_pendapatan / dailyTotals.length)
-        : 0;
-
-      console.log(`📊 COMBINED REPORT [${store_id}]: Kasir=${total_pendapatan_kasir} PPOB=${total_pendapatan_ppob}`);
+      const avgDaily = dailyTotals.length ? Math.round(total_pendapatan / dailyTotals.length) : 0;
 
       const net_revenue = total_pendapatan - total_diskon;
+      const gross_profit = (total_pendapatan_kasir - total_diskon - total_hpp_kasir) + ppobSummary.total_profit;
+      const net_profit = gross_profit; // operational cost default 0
 
-      // Laba Kotor = (Revenue Kasir - HPP Kasir) + Margin PPOB
-      const gross_profit = (total_pendapatan_kasir - total_diskon - total_hpp_kasir) + profit_ppob;
-
-      const operational_cost = 0;
-      const net_profit = gross_profit - operational_cost;
       const marginValue = net_revenue > 0 ? (gross_profit / net_revenue) * 100 : 0;
       const margin = `${marginValue.toFixed(2)}%`;
 
@@ -127,15 +130,15 @@ const ReportController = {
         total_pendapatan,
         total_diskon,
         net_revenue,
-        total_hpp: total_hpp_kasir, // HPP Kasir
+        total_hpp: total_hpp_kasir,
         gross_profit,
-        operational_cost,
+        operational_cost: 0,
         net_profit,
         margin,
-        best_sales_day: finalDailyStats.length ? finalDailyStats.reduce((a, b) => (a.total > b.total ? a : b)).day : '-',
-        lowest_sales_day: finalDailyStats.length ? finalDailyStats.reduce((a, b) => (a.total < b.total ? a : b)).day : '-',
+        best_sales_day: bestSalesDay,
+        lowest_sales_day: lowestSalesDay,
         avg_daily: avgDaily,
-        daily_list: finalDailyStats, // 🔥 Sertakan list harian yang sudah digabung
+        daily_list: finalDailyStats,
         top_products: topProducts,
         stok_menipis: stokMenipis
       });
@@ -336,7 +339,7 @@ const ReportController = {
       );
 
       // Logging aktivitas: generate laporan harian
-      await ActivityLogModel.create(conn, {
+      await ActivityLogModel.create(req.db, {
         user_id: req.user.id,
         store_id: store_id,
         action: 'generate_daily_report',
@@ -426,9 +429,3 @@ const ReportController = {
 };
 
 module.exports = ReportController;
-
-// Penjelasan perubahan:
-// - Perhitungan HPP (total_hpp) sekarang SELALU dari transaction_items.cost_price × qty, bukan dari products.
-// - Perhitungan total_diskon diambil dari SUM(discount_total) di tabel transactions (jika sudah diisi benar saat transaksi).
-// - Semua rumus laba, margin, dan net revenue mengikuti standar POS & akuntansi.
-// - Query SQL sudah audit-ready dan tidak akan berubah walaupun harga beli produk diubah di master products.
