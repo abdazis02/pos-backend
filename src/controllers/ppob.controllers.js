@@ -281,7 +281,7 @@ const PPOBController = {
       let searchCategory = category;
       if (category === 'PLN Token' || category === 'PLN Pasca') {
         searchCategory = 'PLN';
-      } else if (category === 'E-Money') {
+      } else if (category === 'E-Money' || category === 'E-Money Tagihan') {
         searchCategory = 'E-Money';
       }
 
