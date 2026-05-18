@@ -7,19 +7,26 @@ const ReportController = {
       const { store_id } = req.params;
       const { start, end, payment_method } = req.query;
 
-      // Total transaksi, pendapatan, diskon
-      // 🔥 FIX FINAL: Gunakan CONVERT_TZ untuk memastikan query tanggal sinkron dengan WIT
-      const summaryQuery = req.db("transactions").where({ store_id })
+      // 🔥 1. KASIR SUMMARY
+      const cashSummaryQuery = req.db("transactions").where({ store_id })
         .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
         .select(req.db.raw('COUNT(*) as total_transaksi'))
         .select(req.db.raw('CAST(SUM(total_cost) AS DECIMAL(18,2)) AS total_pendapatan'))
         .select(req.db.raw('CAST(SUM(discount_total) AS DECIMAL(18,2)) AS total_diskon'))
         .first();
       if (payment_method == 'cash' || payment_method == 'qris') {
-        summaryQuery.where({ payment_method })
+        cashSummaryQuery.where({ payment_method })
       }
 
-      // HPP/modal (totalCost) dari produk yang terjual - BEST PRACTICE: ambil dari transaction_items
+      // 🔥 2. PPOB SUMMARY (Hanya jika payment_method bukan 'cash', karena PPOB biasanya non-cash di sistem ini)
+      const ppobSummaryQuery = req.db("ppob_orders").where({ store_id, status: 'success' })
+        .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
+        .select(req.db.raw('COUNT(*) as total_transaksi'))
+        .select(req.db.raw('CAST(SUM(sale_price) AS DECIMAL(18,2)) AS total_pendapatan'))
+        .select(req.db.raw('CAST(SUM(sale_price - price) AS DECIMAL(18,2)) AS total_profit'))
+        .first();
+
+      // HPP/modal (totalCost) dari produk yang terjual
       const hppRowsQuery = req.db("transaction_items as ti").where('t.store_id', store_id)
         .whereRaw('DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) <= ?', [start, end])
         .join("transactions as t", "t.id", "ti.transaction_id")
@@ -29,17 +36,21 @@ const ReportController = {
         hppRowsQuery.where('t.payment_method', payment_method)
       }
 
-      // Statistik harian
+      // Statistik harian (KASIR)
       const dailyStatsQuery = req.db("transactions").where({ store_id })
         .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
         .select(req.db.raw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) as day'))
         .select(req.db.raw('SUM(total_cost) as total'))
         .groupBy('day');
-      if (payment_method == 'cash' || payment_method == 'qris') {
-        dailyStatsQuery.where({ payment_method })
-      }
 
-      // Top produk (dengan revenue)
+      // Statistik harian (PPOB)
+      const ppobDailyQuery = req.db("ppob_orders").where({ store_id, status: 'success' })
+        .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
+        .select(req.db.raw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) as day'))
+        .select(req.db.raw('SUM(sale_price) as total'))
+        .groupBy('day');
+
+      // Top produk
       const topProductsQuery = req.db("transaction_items as ti").where('t.store_id', store_id)
         .whereRaw('DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) <= ?', [start, end])
         .join("products as p", "p.id", "ti.product_id")
@@ -58,53 +69,68 @@ const ReportController = {
         .select('id', 'name', 'stock as remaining')
         .where('stock', '<=', 5);
 
-      const [summary, hppRows, dailyStats, topProducts, stokMenipis] = await Promise.all([
-        summaryQuery, hppRowsQuery, dailyStatsQuery, topProductsQuery, stokMenipisQuery
+      const [cashSummary, ppobSummary, hppRows, dailyStats, ppobDaily, topProducts, stokMenipis] = await Promise.all([
+        cashSummaryQuery, ppobSummaryQuery, hppRowsQuery, dailyStatsQuery, ppobDailyQuery, topProductsQuery, stokMenipisQuery
       ]);
 
-      const total_hpp = hppRows.total_hpp || 0;
+      // --- MENGGABUNGKAN DATA ---
+      const total_transaksi = (Number(cashSummary.total_transaksi) || 0) + (Number(ppobSummary.total_transaksi) || 0);
+      const total_pendapatan_kasir = parseFloat(cashSummary.total_pendapatan) || 0;
+      const total_pendapatan_ppob = parseFloat(ppobSummary.total_pendapatan) || 0;
+      const total_pendapatan = total_pendapatan_kasir + total_pendapatan_ppob;
 
-      const dailyTotals = dailyStats.map(r => Number(r.total));
+      const total_diskon = parseFloat(cashSummary.total_diskon) || 0;
+      const total_hpp_kasir = hppRows.total_hpp || 0;
+      const profit_ppob = parseFloat(ppobSummary.total_profit) || 0;
+
+      // Gabungkan statistik harian untuk grafik
+      const combinedDailyMap = {};
+      dailyStats.forEach(d => { combinedDailyMap[d.day] = (combinedDailyMap[d.day] || 0) + Number(d.total); });
+      ppobDaily.forEach(d => { combinedDailyMap[d.day] = (combinedDailyMap[d.day] || 0) + Number(d.total); });
+
+      const finalDailyStats = Object.keys(combinedDailyMap).map(day => ({
+        day,
+        total: combinedDailyMap[day]
+      })).sort((a,b) => a.day.localeCompare(b.day));
+
+      const dailyTotals = finalDailyStats.map(r => Number(r.total));
       const bestSalesDay = dailyTotals.length ? Math.max(...dailyTotals) : 0;
       const lowestSalesDay = dailyTotals.length ? Math.min(...dailyTotals) : 0;
 
-      const total_pendapatan = parseFloat(summary.total_pendapatan) || 0;
-      const total_diskon = parseFloat(summary.total_diskon) || 0;
-
-      // 🔥 FIX: Rata-rata harian dihitung dari total pendapatan dibagi jumlah hari unik yang ada datanya
       const avgDaily = dailyTotals.length
         ? Math.round(total_pendapatan / dailyTotals.length)
         : 0;
 
-      console.log(`📊 REPORT DEBUG [${store_id}]: start=${start} end=${end} | trx=${summary.total_transaksi} income=${total_pendapatan}`);
+      console.log(`📊 COMBINED REPORT [${store_id}]: Kasir=${total_pendapatan_kasir} PPOB=${total_pendapatan_ppob}`);
 
       const net_revenue = total_pendapatan - total_diskon;
-      const gross_profit = net_revenue - total_hpp;
-      const operational_cost = 0; // default
+
+      // Laba Kotor = (Revenue Kasir - HPP Kasir) + Margin PPOB
+      const gross_profit = (total_pendapatan_kasir - total_diskon - total_hpp_kasir) + profit_ppob;
+
+      const operational_cost = 0;
       const net_profit = gross_profit - operational_cost;
-      const marginValue =
-        net_revenue > 0
-          ? (gross_profit / net_revenue) * 100
-          : 0;
+      const marginValue = net_revenue > 0 ? (gross_profit / net_revenue) * 100 : 0;
       const margin = `${marginValue.toFixed(2)}%`;
 
       return response.success(res, {
-        total_transaksi: summary.total_transaksi,
+        total_transaksi,
         total_pendapatan,
         total_diskon,
         net_revenue,
-        total_hpp,
+        total_hpp: total_hpp_kasir, // HPP Kasir
         gross_profit,
         operational_cost,
         net_profit,
         margin,
-        best_sales_day: bestSalesDay,
-        lowest_sales_day: lowestSalesDay,
+        best_sales_day: finalDailyStats.length ? finalDailyStats.reduce((a, b) => (a.total > b.total ? a : b)).day : '-',
+        lowest_sales_day: finalDailyStats.length ? finalDailyStats.reduce((a, b) => (a.total < b.total ? a : b)).day : '-',
         avg_daily: avgDaily,
+        daily_list: finalDailyStats, // 🔥 Sertakan list harian yang sudah digabung
         top_products: topProducts,
         stok_menipis: stokMenipis
       });
-    } catch (err) {
+    } catch (error) {
       return response.error(res, err, 'Gagal mengambil laporan summary');
     }
   },
