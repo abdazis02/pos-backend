@@ -9,7 +9,8 @@ const PPOBProductModel = {
     }
 
     if (filters.category) {
-      query = query.where('category', filters.category);
+      // 🔥 Gunakan WHERE LIKE agar pencarian kategori lebih fleksibel (misal: E-Money vs E-MONEY)
+      query = query.where('category', 'like', `%${filters.category}%`);
     }
 
     return query.orderBy('product_name');

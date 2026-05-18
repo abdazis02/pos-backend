@@ -281,6 +281,9 @@ const PPOBController = {
       let searchCategory = category;
       if (category === 'PLN Token' || category === 'PLN Pasca') {
         searchCategory = 'PLN';
+      } else if (category === 'E-Money') {
+        // Digiflazz terkadang menggunakan 'E-Money' atau 'E-MONEY'
+        searchCategory = 'E-Money';
       }
 
       // Ambil data lokal dulu
