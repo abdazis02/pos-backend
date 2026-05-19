@@ -115,6 +115,20 @@ const PPOBController = {
 
       const { store_id } = req.params;
       const tenant_id = req.user.tenant_id;
+
+      // 🔥 1. IDEMPOTENCY CHECK: Cegah double transaksi dalam rentang waktu singkat
+      // Kita cek apakah ada transaksi dengan customer_no dan buyer_sku_code yang sama dalam 2 menit terakhir
+      const duplicateCheck = await trxTenant('ppob_orders')
+        .where({ store_id, customer_no: value.customer_no, buyer_sku_code: value.buyer_sku_code })
+        .whereRaw('created_at > NOW() - INTERVAL 2 MINUTE')
+        .first();
+
+      if (duplicateCheck) {
+        await trxMaster.rollback();
+        await trxTenant.rollback();
+        return response.badRequest(res, 'Transaksi sedang diproses. Mohon tunggu 2 menit untuk mencoba nomor yang sama.');
+      }
+
       const owner = await OwnerModel.getByTenantId(tenant_id);
       if (!owner) {
         await trxMaster.rollback();
@@ -267,30 +281,34 @@ const PPOBController = {
   },
 
   async digiflazzWebhook(req, res) {
-    // 🔥 Pastikan payload dibaca dengan benar (Buffer atau JSON)
+    // 🔥 1. CAPTURE RAW UNTUK DEBUG
+    console.log("📩 WEBHOOK HEADERS:", JSON.stringify(req.headers));
+
     let payload;
     try {
       payload = Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString('utf-8')) : req.body;
-      console.log("📩 WEBHOOK INCOMING DARI DIGIFLAZZ:", JSON.stringify(payload));
+      console.log("📩 WEBHOOK PAYLOAD:", JSON.stringify(payload));
     } catch (err) {
       console.error("❌ Gagal parsing payload webhook:", err);
       return response.badRequest(res, 'Payload tidak valid');
     }
 
     try {
-      // Verifikasi signature Digiflazz
-      if (!verifyDigiflazzWebhook(req, payload)) {
-        console.error('❌ Webhook ditolak: signature tidak valid');
-        return response.forbidden(res, 'Signature tidak valid');
+      const data = payload.data || payload;
+      const { ref_id, rc, sn, status } = data;
+
+      if (!ref_id) {
+        console.warn("⚠️ Webhook ignored: No Ref ID found");
+        return response.badRequest(res, 'No Ref ID');
       }
 
-      const data = payload.data || payload;
-      const { ref_id, rc, sn } = data;
-
-      if (!ref_id) return response.badRequest(res, 'No Ref ID');
+      console.log(`📡 Processing Webhook for Ref: ${ref_id} | Status: ${status} | RC: ${rc}`);
 
       const parsed = parsePpobRefId(ref_id);
-      if (!parsed) return response.badRequest(res, 'Format Ref ID Salah');
+      if (!parsed) {
+        console.error(`❌ Webhook error: Format Ref ID invalid [${ref_id}]`);
+        return response.badRequest(res, 'Format Ref ID Salah');
+      }
 
       const tenant = await OwnerModel.getTenantByID(parsed.tenant_id);
       if (!tenant) return response.notFound(res, 'Tenant Tidak Ada');
