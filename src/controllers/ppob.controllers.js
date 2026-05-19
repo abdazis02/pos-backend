@@ -23,6 +23,7 @@ const purchaseSchema = Joi.object({
   buyer_sku_code: Joi.string().required(),
   customer_no: Joi.string().required(),
   sale_price: Joi.number().required(),
+  tr_id: Joi.string().optional(), // 🔥 Tambahan parameter untuk ID Inquiry Pascabayar
 });
 
 function parseDigiflazzPrice(product) {
@@ -143,6 +144,7 @@ const PPOBController = {
         buyer_sku_code: value.buyer_sku_code,
         customer_no: value.customer_no,
         ref_id,
+        tr_id: value.tr_id, // 🔥 Kirim tr_id ke digiflazz.js
       });
 
       if (String(result?.rc) !== '00' && String(result?.rc) !== '03') {

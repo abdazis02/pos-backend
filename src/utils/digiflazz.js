@@ -5,10 +5,11 @@ const DIGIFLAZZ_URL = process.env.DIGIFLAZZ_URL || 'https://api.digiflazz.com';
 const DIGIFLAZZ_USERNAME = process.env.DIGIFLAZZ_USERNAME;
 const DIGIFLAZZ_API_KEY = process.env.DIGIFLAZZ_API_KEY;
 
-function buildSignature({ username, ref_id = '' }) {
+function buildSignature({ username, ref_id = '', tr_id = '' }) {
+  const signKey = tr_id ? tr_id : ref_id;
   return crypto
     .createHash('md5')
-    .update(`${username}${DIGIFLAZZ_API_KEY}${ref_id}`)
+    .update(`${username}${DIGIFLAZZ_API_KEY}${signKey}`)
     .digest('hex');
 }
 
@@ -19,7 +20,7 @@ function sendDigiflazzRequest(path, payload) {
 
   payload.username = DIGIFLAZZ_USERNAME;
 
-  if (payload.ref_id) {
+  if (payload.ref_id || payload.tr_id) {
     payload.sign = buildSignature(payload);
   }
 
@@ -100,7 +101,7 @@ async function getProductDetail(buyer_sku_code) {
   return findProductBySku(products, buyer_sku_code);
 }
 
-async function purchase({ buyer_sku_code, customer_no, ref_id }) {
+async function purchase({ buyer_sku_code, customer_no, ref_id, tr_id }) {
   if (!buyer_sku_code || !customer_no) {
     throw new Error('buyer_sku_code, dan customer_no wajib diisi');
   }
@@ -114,19 +115,27 @@ async function purchase({ buyer_sku_code, customer_no, ref_id }) {
                      product?.category?.toLowerCase().includes('pascabayar') ||
                      ['PLN PASCABAYAR', 'PDAM', 'BPJS', 'TELKOM', 'E-MONEY'].includes(product?.brand?.toUpperCase());
 
-  const payload = {
-    testing: process.env.NODE_ENV !== 'production',
-    cb_url: process.env.URL + '/api/webhook/digiflazz',
-    buyer_sku_code,
-    customer_no,
-    ref_id,
-  };
-
+  let payload;
   if (isPostpaid) {
-    payload.commands = 'pay-pasca';
+    if (!tr_id) {
+      throw new Error('tr_id wajib diisi untuk pembayaran pascabayar (harus melalui inquiry terlebih dahulu)');
+    }
+    payload = {
+      commands: 'pay-pasca',
+      tr_id,
+      testing: process.env.NODE_ENV !== 'production'
+    };
+  } else {
+    payload = {
+      testing: process.env.NODE_ENV !== 'production',
+      cb_url: process.env.URL + '/api/webhook/digiflazz',
+      buyer_sku_code,
+      customer_no,
+      ref_id,
+    };
   }
 
-  console.log(`🚀 Digiflazz Req [transaction]: ${buyer_sku_code} to ${customer_no}`);
+  console.log(`🚀 Digiflazz Req [transaction]: ${buyer_sku_code} to ${customer_no} (Postpaid: ${isPostpaid})`);
 
   return sendDigiflazzRequest('transaction', payload);
 }
