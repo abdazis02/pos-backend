@@ -84,8 +84,9 @@ async function productList(buyer_sku_code = null) {
     code: buyer_sku_code || undefined
   });
 
-  const prepaidList = normalizeDigiflazzProductList(prepaidResult);
-  const postpaidList = normalizeDigiflazzProductList(postpaidResult);
+  // 🔥 Inject 'type' agar database bisa membedakan prabayar/pascabayar
+  const prepaidList = normalizeDigiflazzProductList(prepaidResult).map(p => ({ ...p, type: 'prepaid' }));
+  const postpaidList = normalizeDigiflazzProductList(postpaidResult).map(p => ({ ...p, type: 'postpaid' }));
 
   return [...prepaidList, ...postpaidList];
 }
