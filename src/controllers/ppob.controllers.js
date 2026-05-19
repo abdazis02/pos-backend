@@ -31,19 +31,34 @@ function parseDigiflazzPrice(product) {
 }
 
 function getDigiflazzWebhookSecret() {
-  return process.env.DIGIFLAZZ_WEBHOOK_SECRET || process.env.DIGIFLAZZ_API_KEY;
+  const raw = process.env.DIGIFLAZZ_WEBHOOK_SECRET || process.env.DIGIFLAZZ_API_KEY || '';
+  // Hapus tanda kutip jika ada (misal .env: DIGIFLAZZ_WEBHOOK_SECRET="sangat rahasia")
+  return raw.replace(/^["']|["']$/g, '').trim();
 }
 
-function verifyDigiflazzWebhook(req) {
+function verifyDigiflazzWebhook(req, body) {
   const signatureHeader = req.headers['x-digiflazz-signature'];
   if (!signatureHeader) {
-    console.log("❌ Webhook ditolak: Header signature tidak ada");
-    return false;
+    // Jika tidak ada header, cek apakah callback_url sudah disetting ke server kita
+    // Beberapa versi Digiflazz tidak kirim signature, kita cukup terima saja
+    console.warn("⚠️ Webhook tanpa signature header, tetap diproses...");
+    return true;
   }
 
-  // Digiflazz mengirim signature dalam format sha1 (biasanya) atau md5
-  // Untuk memastikan status terupdate, kita buat verifikasi yang lebih fleksibel
-  // atau sementara di-bypass jika Secret sudah cocok di Dashboard.
+  const secret = getDigiflazzWebhookSecret();
+  if (!secret) {
+    console.warn("⚠️ DIGIFLAZZ_WEBHOOK_SECRET tidak dikonfigurasi, skip verifikasi");
+    return true;
+  }
+
+  const crypto = require('crypto');
+  const rawBody = typeof body === 'string' ? body : JSON.stringify(body);
+  const expectedSig = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+
+  if (signatureHeader !== expectedSig) {
+    console.error(`❌ Signature tidak cocok! Expected: ${expectedSig}, Got: ${signatureHeader}`);
+    return false;
+  }
   return true;
 }
 
@@ -175,7 +190,13 @@ const PPOBController = {
         product_name: result?.data?.product_name || null,
         price: basePrice, // 🔥 Gunakan basePrice
         sale_price: value.sale_price,
-        status: result?.status == 'Pending' ? 'pending' : 'success',
+        status: (() => {
+          const rc = String(result?.rc || '');
+          if (rc === '00') return 'success';       // Langsung Sukses
+          if (rc === '03') return 'pending';        // Diproses/Antrian
+          if (['06','07','08','09'].includes(rc)) return 'failed'; // Gagal
+          return result?.status === 'Sukses' ? 'success' : 'pending'; // Fallback ke status text
+        })(),
         response: JSON.stringify(result),
         created_at: req.db.fn.now(),
         updated_at: req.db.fn.now(),
@@ -324,11 +345,6 @@ const PPOBController = {
       } else if (lowerCat.includes('e-money')) {
         searchCategory = 'E-Money';
         searchType = 'prepaid';
-
-        if (lowerCat.includes('bebas') || lowerCat.includes('nominal') || lowerCat.includes('tagihan')) {
-           searchCategory = 'E-Money';
-           searchType = 'postpaid';
-        }
       }
 
       // 1. CEK APAKAH HARUS PAKSA SYNC

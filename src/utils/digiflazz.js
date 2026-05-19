@@ -123,11 +123,9 @@ async function purchase({ buyer_sku_code, customer_no, ref_id, tr_id }) {
     payload = {
       commands: 'pay-pasca',
       tr_id,
-      testing: process.env.NODE_ENV !== 'production'
     };
   } else {
     payload = {
-      testing: process.env.NODE_ENV !== 'production',
       cb_url: process.env.URL + '/api/webhook/digiflazz',
       buyer_sku_code,
       customer_no,

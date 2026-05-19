@@ -283,7 +283,7 @@ const TransactionController = {
         const transaction = await api.charge({
           payment_type: "gopay",
           transaction_details: {
-            order_id: `TX${transaction_id?.toString().padStart(6, '0')}`,
+            order_id: `TX-T${tenant_id}-S${store_id}-${transaction_id}`,
             gross_amount: grandTotal
           }
         })
@@ -374,8 +374,18 @@ const TransactionController = {
       return res.status(200)
     }
 
+    const { tenant_id, store_id } = req.params;
+    
+    // Fetch store first to get its midtrans server key
+    const store = await StoreModel.findStoreById(master, store_id);
+    if (!store || !store.midtrans_server_key) {
+      return response.badRequest(res, 'Store Midtrans Server Key not configured');
+    }
+
     const { order_id, status_code, gross_amount, transaction_status, fraud_status, signature_key } = req.body;
-    const payload = order_id + status_code + gross_amount + process.env.MIDTRANS_SERVER_KEY;
+    
+    // 🔥 PENTING: Gunakan Server Key milik TOKO, bukan milik superadmin!
+    const payload = order_id + status_code + gross_amount + store.midtrans_server_key;
 
     const hash = require('crypto')
       .createHash("sha512")
@@ -392,13 +402,13 @@ const TransactionController = {
 
     const trxMaster = await master.transaction()
     try {
-      const { tenant_id, store_id } = req.params;
+
       const fee = parseInt(process.env.TRANSACTION_FEE, 10) || 0;
 
       const tenant = await OwnerModel.getTenantByID(tenant_id);
       const tenant_db = getTenantConnection(tenant);
 
-      const id = parseInt(order_id.substr(-6, 6))
+      const id = parseInt(order_id.split('-').pop(), 10);
       const transaction = await TransactionModel.findTransactionById(tenant_db, store_id, id);
       if (!transaction) return response.notFound(res, 'Transaction not found!');
 
