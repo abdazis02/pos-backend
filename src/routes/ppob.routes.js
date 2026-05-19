@@ -53,6 +53,15 @@ router.get(
   PPOBController.getOrder
 );
 
+// 🔥 Manual check-status: tarik status terbaru dari Digiflazz dan update DB
+router.post(
+  '/:store_id/ppob/orders/:ref_id/check-status',
+  authMiddleware(['owner', 'admin', 'cashier']),
+  tenantResolver,
+  checkStore,
+  PPOBController.checkStatus
+);
+
 router.post(
   '/admin/ppob/sync-products',
   authMiddleware(['superadmin']),

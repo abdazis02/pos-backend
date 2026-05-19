@@ -26,6 +26,10 @@ const app = express();
 const httpServer = createServer(app);
 init(httpServer);
 
+// 🔥 Webhook route HARUS sebelum express.json() agar body diterima sebagai raw Buffer
+// (signature Digiflazz dihitung dari raw string, bukan re-stringify JSON object)
+app.use('/api', webhookRoutes);
+
 // Middleware
 app.use(cors({
     origin: '*', // Untuk development, allow semua origin
@@ -51,7 +55,7 @@ app.use('/api/backup', backupRoutes);
 app.use('/api/owner', ownerRoutes);
 app.use('/api/wallet', walletTransactionRoutes);
 app.use('/api/stores', ppobRoutes);
-app.use('/api', webhookRoutes);
+// webhookRoutes sudah dipindah ke atas (sebelum express.json())
 app.use('/sync', syncRoutes);
 app.use('/api/superadmin', superadminRoutes);
 

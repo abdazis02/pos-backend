@@ -452,14 +452,95 @@ const PPOBController = {
   async getOrder(req, res) {
     try {
       const { store_id, ref_id } = req.params;
-      const order = await PPOBOrderModel.findOrderByRefId(req.db, store_id, ref_id);
+      let order = await PPOBOrderModel.findOrderByRefId(req.db, store_id, ref_id);
       if (!order) {
         return response.notFound(res, 'Order PPOB tidak ditemukan');
       }
+
+      // 🔥 AUTO CHECK-STATUS: Jika masih pending, otomatis cek ke Digiflazz
+      if (order.status === 'pending') {
+        try {
+          const digiResult = await Digiflazz.checkTransactionStatus(order.ref_id);
+          const digiData = digiResult?.data || digiResult;
+          const rc = String(digiData?.rc || '');
+
+          let newStatus = order.status;
+          if (rc === '00' || String(digiData?.status || '').toLowerCase() === 'sukses') {
+            newStatus = 'success';
+          } else if (['06', '07', '08', '09'].includes(rc)) {
+            newStatus = 'failed';
+          }
+
+          if (newStatus !== order.status) {
+            await req.db('ppob_orders')
+              .where('ref_id', ref_id)
+              .update({
+                status: newStatus,
+                sn: digiData?.sn || order.sn || '',
+                product_name: digiData?.product_name || order.product_name || null,
+                response: JSON.stringify(digiData),
+                updated_at: new Date(),
+              });
+            console.log(`✅ [AutoCheck] Order ${ref_id} diupdate dari '${order.status}' → '${newStatus}'`);
+            // Ambil data terbaru dari DB
+            order = await PPOBOrderModel.findOrderByRefId(req.db, store_id, ref_id);
+          } else {
+            console.log(`ℹ️ [AutoCheck] Order ${ref_id} masih '${order.status}' (rc=${rc})`);
+          }
+        } catch (checkErr) {
+          // Jangan gagalkan response jika check-status error
+          console.warn(`⚠️ [AutoCheck] Gagal cek status Digiflazz untuk ${ref_id}:`, checkErr.message);
+        }
+      }
+
       return response.success(res, order, 'Detail order PPOB berhasil diambil');
     } catch (error) {
       console.error('PPOB get order error:', error);
       return response.error(res, error, 'Gagal mengambil detail order PPOB');
+    }
+  },
+
+  /**
+   * 🔥 Manual Check-Status: Endpoint khusus untuk memaksa refresh status dari Digiflazz
+   * POST /api/stores/:store_id/ppob/orders/:ref_id/check-status
+   */
+  async checkStatus(req, res) {
+    try {
+      const { store_id, ref_id } = req.params;
+      const order = await PPOBOrderModel.findOrderByRefId(req.db, store_id, ref_id);
+      if (!order) {
+        return response.notFound(res, 'Order PPOB tidak ditemukan');
+      }
+
+      const digiResult = await Digiflazz.checkTransactionStatus(order.ref_id);
+      const digiData = digiResult?.data || digiResult;
+      const rc = String(digiData?.rc || '');
+
+      let newStatus;
+      if (rc === '00' || String(digiData?.status || '').toLowerCase() === 'sukses') {
+        newStatus = 'success';
+      } else if (['06', '07', '08', '09'].includes(rc)) {
+        newStatus = 'failed';
+      } else {
+        newStatus = 'pending';
+      }
+
+      await req.db('ppob_orders')
+        .where('ref_id', ref_id)
+        .update({
+          status: newStatus,
+          sn: digiData?.sn || order.sn || '',
+          product_name: digiData?.product_name || order.product_name || null,
+          response: JSON.stringify(digiData),
+          updated_at: new Date(),
+        });
+
+      const updatedOrder = await PPOBOrderModel.findOrderByRefId(req.db, store_id, ref_id);
+      console.log(`🔄 [ManualCheck] Order ${ref_id} diupdate ke: ${newStatus} (rc=${rc})`);
+      return response.success(res, updatedOrder, `Status order diperbarui: ${newStatus}`);
+    } catch (error) {
+      console.error('PPOB check-status error:', error);
+      return response.error(res, error, 'Gagal memeriksa status order PPOB ke Digiflazz');
     }
   },
 };
