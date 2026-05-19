@@ -45,9 +45,7 @@ const PPOBProductModel = {
           price: isPostpaid ? (parseFloat(product.admin) || 0) : (parseFloat(product.price) || 0),
           buyer_sku_code: sku,
           type: product.type || 'prepaid',
-          is_active: isPostpaid
-            ? (product.status === 1 || product.status === '1' || String(product.status).toLowerCase() === 'aktif' || String(product.status).toLowerCase() === 'on')
-            : (product.buyer_product_status && product.seller_product_status),
+          is_active: Boolean(product.buyer_product_status && product.seller_product_status),
           updated_at: trx.fn.now(),
         }
 

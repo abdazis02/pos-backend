@@ -1,9 +1,5 @@
 const db = require('./src/config/knexMaster');
-db('ppob_products')
-  .whereIn('buyer_sku_code', ['dana1', 'gopay1', 'ovo1', 'shopee1'])
-  .update({ category: 'E-Money' })
-  .then(res => {
-    console.log('Updated rows:', res);
-    process.exit(0);
-  })
-  .catch(console.error);
+db('ppob_products').where('buyer_sku_code', 'dana1').update({ is_active: 1, category: 'E-Money' }).then(res => {
+  console.log('updated:', res);
+  process.exit(0);
+});

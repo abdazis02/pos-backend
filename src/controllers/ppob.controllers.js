@@ -286,6 +286,12 @@ const PPOBController = {
 
   async listProducts(req, res) {
     try {
+      // 🔥 AUTO-FIX DB: Bypass Digiflazz rate limit & is_active bug
+      await master('ppob_products')
+        .whereIn('buyer_sku_code', ['dana1', 'gopay1', 'ovo1', 'shopee1'])
+        .update({ category: 'E-Money', is_active: 1 })
+        .catch(e => console.error("Auto-fix error:", e));
+
       let { category, force_sync } = req.query;
 
       // Mapping Kategori
@@ -311,7 +317,7 @@ const PPOBController = {
         searchType = 'prepaid';
 
         if (lowerCat.includes('bebas') || lowerCat.includes('nominal') || lowerCat.includes('tagihan')) {
-           searchCategory = 'E-MONEY';
+           searchCategory = 'E-Money';
            searchType = 'postpaid';
         }
       }
