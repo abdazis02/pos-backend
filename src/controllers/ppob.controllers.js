@@ -316,8 +316,11 @@ const PPOBController = {
           const allProducts = await Digiflazz.productList();
           if (allProducts && allProducts.length > 0) {
             await PPOBProductModel.createOrUpdateProducts(allProducts);
-            // Ambil ulang data terbaru
-            products = await PPOBProductModel.getAllProducts({ category: searchCategory || undefined });
+            // 🔥 FIX: Tambahkan searchType di pengambilan ulang agar filter tetap bekerja
+            products = await PPOBProductModel.getAllProducts({
+              category: searchCategory || undefined,
+              type: searchType
+            });
             console.log(`✅ Sinkronisasi Berhasil. Total: ${allProducts.length} produk.`);
           }
         } catch (syncErr) {
