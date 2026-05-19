@@ -107,7 +107,7 @@ const PPOBController = {
       }
 
       const price = parseDigiflazzPrice(product);
-      if (!price || price <= 0) {
+      if (price < 0) { // Biarkan 0 jika produk bebas nominal
         await trxMaster.rollback();
         await trxTenant.rollback();
         return response.badRequest(res, 'Harga produk PPOB tidak valid');
@@ -119,9 +119,18 @@ const PPOBController = {
         return response.badRequest(res, 'Harga jual lebih kecil dari harga produk PPOB');
       }
 
-      const fee = parseInt(process.env.TRANSACTION_FEE, 10) || 0;
-      const margin = value.sale_price - price;
-      const totalDeduct = price + fee;
+      // 🔥 AMBIL FEE DINAMIS DARI DATABASE (FALLBACK KE .ENV JIKA TIDAK ADA)
+      let fee = 0;
+      try {
+        const setting = await master('configs').where({ key: 'ppob_fee' }).first();
+        fee = setting ? parseInt(setting.value, 10) : (parseInt(process.env.TRANSACTION_FEE, 10) || 0);
+      } catch (e) {
+        fee = parseInt(process.env.TRANSACTION_FEE, 10) || 0;
+      }
+
+      const totalCostForMitra = price + fee;
+      const margin = value.sale_price - totalCostForMitra; // Laba Bersih Mitra
+      const totalDeduct = totalCostForMitra;
 
       if (beforeBalance < totalDeduct) {
         await trxMaster.rollback();
