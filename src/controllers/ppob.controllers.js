@@ -166,6 +166,8 @@ const PPOBController = {
         sale_price: value.sale_price,
         status: result?.status == 'Pending' ? 'pending' : 'success',
         response: JSON.stringify(result),
+        // 🔥 Simpan dalam WIT murni (karena server cloud biasanya UTC, kita paksa geser saat simpan atau baca)
+        // Agar konsisten, kita biarkan SQL yang melakukan konversi saat laporan.
         created_at: req.db.fn.now(),
         updated_at: req.db.fn.now(),
       };

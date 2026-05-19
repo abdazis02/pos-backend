@@ -5,16 +5,13 @@ const ReportController = {
   async summary(req, res) {
     try {
       const { store_id } = req.params;
-      const { start, end, payment_method, timezone } = req.query;
+      const { start, end, payment_method } = req.query;
 
-      // 🔥 STANDARISASI: Database (TIMESTAMP) adalah UTC (+00:00).
-      // Kita konversi ke Timezone HP user untuk memfilter Tanggal yang pas.
+      // 🚀 HARDLOCK WIT (+09:00): Standar Tunggal untuk Ternate/Maluku Utara
       const baseTz = "+00:00";
-      const targetTz = timezone || "+09:00";
+      const targetTz = "+09:00";
 
-      console.log(`🔍 [REPORT SYNC] Store: ${store_id} | Range: ${start} to ${end} | TZ: ${targetTz}`);
-
-      // 1. KASIR SUMMARY (POS)
+      // 1. KASIR SUMMARY (POS) - Filter Tanggal WIT
       const cashSummaryQuery = req.db("transactions").where({ store_id })
         .whereRaw(`DATE(CONVERT_TZ(created_at, ?, ?)) >= ? AND DATE(CONVERT_TZ(created_at, ?, ?)) <= ?`, [baseTz, targetTz, start, baseTz, targetTz, end])
         .select(req.db.raw('COUNT(*) as total_transaksi'))
@@ -26,21 +23,21 @@ const ReportController = {
         cashSummaryQuery.where({ payment_method });
       }
 
-      // HPP POS
+      // HPP POS - Filter Tanggal WIT
       const hppRowsQuery = req.db("transaction_items as ti").where('t.store_id', store_id)
         .whereRaw(`DATE(CONVERT_TZ(t.created_at, ?, ?)) >= ? AND DATE(CONVERT_TZ(t.created_at, ?, ?)) <= ?`, [baseTz, targetTz, start, baseTz, targetTz, end])
         .join("transactions as t", "t.id", "ti.transaction_id")
         .select(req.db.raw('COALESCE(SUM(ti.cost_price * ti.qty), 0) AS total_hpp'))
         .first();
 
-      // Statistik harian POS
+      // Statistik harian POS - Label Hari WIT
       const dailyStatsQuery = req.db("transactions").where({ store_id })
         .whereRaw(`DATE(CONVERT_TZ(created_at, ?, ?)) >= ? AND DATE(CONVERT_TZ(created_at, ?, ?)) <= ?`, [baseTz, targetTz, start, baseTz, targetTz, end])
         .select(req.db.raw(`DATE(CONVERT_TZ(created_at, ?, ?)) as day`, [baseTz, targetTz]))
         .select(req.db.raw('SUM(total_cost) as total'))
         .groupBy('day');
 
-      // Top produk POS
+      // Top produk POS - Filter Tanggal WIT
       const topProductsQuery = req.db("transaction_items as ti").where('t.store_id', store_id)
         .whereRaw(`DATE(CONVERT_TZ(t.created_at, ?, ?)) >= ? AND DATE(CONVERT_TZ(t.created_at, ?, ?)) <= ?`, [baseTz, targetTz, start, baseTz, targetTz, end])
         .join("products as p", "p.id", "ti.product_id")
@@ -59,7 +56,7 @@ const ReportController = {
         .select('id', 'name', 'stock as remaining')
         .where('stock', '<=', 5);
 
-      // 2. PPOB SUMMARY (Safe Fetch)
+      // 2. PPOB SUMMARY (Filter Tanggal WIT)
       let ppobSummaryData = { total_transaksi: 0, total_pendapatan: 0, total_profit: 0, total_hpp: 0 };
       let ppobDaily = [];
 
@@ -93,7 +90,7 @@ const ReportController = {
         console.warn("PPOB Data Fetch Skip:", e.message);
       }
 
-      // 🔥 3. RECENT ACTIVITIES (FIX WAKTU: Kirim format string agar tidak bergeser di HP)
+      // 🔥 3. RECENT ACTIVITIES (WIT LITERAL: Format jam agar tidak bergeser di HP)
       const recentTransactions = await req.db("transactions").where({ store_id, payment_status: 'paid' })
         .whereRaw(`DATE(CONVERT_TZ(created_at, ?, ?)) >= ? AND DATE(CONVERT_TZ(created_at, ?, ?)) <= ?`, [baseTz, targetTz, start, baseTz, targetTz, end])
         .select(req.db.raw(`DATE_FORMAT(CONVERT_TZ(created_at, ?, ?), '%Y-%m-%d %H:%i:%s') as created_at`, [baseTz, targetTz]))
@@ -183,9 +180,9 @@ const ReportController = {
   async products(req, res) {
     try {
       const { store_id } = req.params;
-      const { start, end, timezone } = req.query;
+      const { start, end } = req.query;
       const baseTz = "+00:00";
-      const targetTz = timezone || "+09:00";
+      const targetTz = "+09:00";
 
       const productsCount = await req.db("products").count({ total: '*' }).where({ store_id }).first();
 
@@ -236,9 +233,9 @@ const ReportController = {
   async cashiers(req, res) {
     try {
       const { store_id } = req.params;
-      const { start, end, timezone } = req.query;
+      const { start, end } = req.query;
       const baseTz = "+00:00";
-      const targetTz = timezone || "+09:00";
+      const targetTz = "+09:00";
 
       const cashierQuery = req.db(process.env.DB_NAME + ".users as u")
         .select([
@@ -284,9 +281,9 @@ const ReportController = {
   async generateDailyReport(req, res) {
     try {
       const { store_id } = req.params;
-      const { date, timezone } = req.query;
+      const { date } = req.query;
       const baseTz = "+00:00";
-      const targetTz = timezone || "+09:00";
+      const targetTz = "+09:00";
 
       if (!date) return response.badRequest(res, 'Tanggal laporan wajib diisi.');
 

@@ -34,9 +34,9 @@ function mapTransactionToFrontend(tx, owner_id, items = []) {
     tax: tx.tax,
     tax_percentage: tx.tax_percentage,
     notes: tx.notes,
-    // 🔥 FIX RADIKAL: Gunakan moment untuk format string murni tanpa offset 'Z'
-    // Agar HP tidak mencoba menggeser waktu lagi
-    created_at: moment(tx.created_at).format('YYYY-MM-DD HH:mm:ss'),
+    // 🔥 FIX HARDLOCK WIT (+09:00)
+    // Kirim string murni WIT agar tidak ada pergeseran lagi di HP
+    created_at: moment.utc(tx.created_at).utcOffset(9).format('YYYY-MM-DD HH:mm:ss'),
     items: items.map(item => ({
       productId: item.product_id,
       name: item.product_name,
