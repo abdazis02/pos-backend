@@ -21,7 +21,7 @@ const AuthController = {
       }
 
       // 🔥 Tambahkan business_category di sini
-      let business_name, business_category, store_name, stores = [];
+      let business_name, business_category, address, phone, store_name, stores = [];
 
       // ===== EMAIL CHECK from DB master =====
       const user = await UserModel.findByEmail(email);
@@ -45,9 +45,9 @@ const AuthController = {
           // 🔥 Mengambil business_name, business_category, address, phone
           const owner = await OwnerModel.getBussinesNameByTenantId(user.tenant_id);
           business_name = owner?.business_name;
-          business_category = owner?.business_category; // 🔥 Ambil kategori
-          address = owner?.address; // 🔥
-          phone = owner?.phone;     // 🔥
+          business_category = owner?.business_category;
+          address = owner?.address;
+          phone = owner?.phone;
 
           stores = await StoreModel.getAllStores(tenant_db);
           if (stores.length > 0) {

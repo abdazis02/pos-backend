@@ -6,7 +6,19 @@ const ReportController = {
     try {
       const { store_id } = req.params;
       const { start, end, payment_method, timezone } = req.query;
-      const tz = timezone || "+09:00"; // Fallback ke WIT jika tidak ada
+
+      // 🔥 DYNAMIC TIMEZONE (Default ke WIT jika tidak dikirim)
+      const tz = timezone || "+09:00";
+      console.log(`🔍 [REPORT AUDIT] Store: ${store_id} | Range: ${start} - ${end} | TZ: ${tz}`);
+
+      // DEBUG: Cek filter tanggal di SQL
+      const debugFilter = await req.db("transactions").where({ store_id })
+        .whereRaw(`DATE(CONVERT_TZ(created_at, "+00:00", ?)) = ?`, [tz, start])
+        .select(req.db.raw('COUNT(*) as total'))
+        .select(req.db.raw('MIN(created_at) as first_trx'))
+        .select(req.db.raw('MAX(created_at) as last_trx'))
+        .first();
+      console.log(`📝 [DEBUG DATE] Filter ${start} (UTC-BASE) : Found ${debugFilter.total} transactions between ${debugFilter.first_trx} and ${debugFilter.last_trx}`);
 
       // 1. KASIR SUMMARY (POS)
       const cashSummaryQuery = req.db("transactions").where({ store_id })
@@ -87,12 +99,12 @@ const ReportController = {
         console.warn("PPOB Data Fetch Skip:", e.message);
       }
 
-      // 🔥 3. RECENT ACTIVITIES (GABUNGAN POS + PPOB)
+      // 3. RECENT ACTIVITIES (GABUNGAN POS + PPOB)
       const recentTransactions = await req.db("transactions").where({ store_id, payment_status: 'paid' })
         .whereRaw(`DATE(CONVERT_TZ(created_at, "+00:00", ?)) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", ?)) <= ?`, [tz, start, tz, end])
         .select('created_at', req.db.raw('"POS" as source'), 'payment_method as type', 'total_cost as amount')
         .orderBy('created_at', 'desc')
-        .limit(10);
+        .limit(15);
 
       let recentPpob = [];
       try {
@@ -101,7 +113,7 @@ const ReportController = {
             .whereRaw(`DATE(CONVERT_TZ(created_at, "+00:00", ?)) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", ?)) <= ?`, [tz, start, tz, end])
             .select('created_at', req.db.raw('"PPOB" as source'), 'buyer_sku_code as type', 'sale_price as amount')
             .orderBy('created_at', 'desc')
-            .limit(10);
+            .limit(15);
         }
       } catch (e) {}
 
@@ -109,7 +121,7 @@ const ReportController = {
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
         .slice(0, 15);
 
-      // 4. EXECUTE ALL QUERIES
+      // 4. EXECUTE SUMMARY QUERIES
       const [cashSummary, hppRows, dailyStats, topProducts, stokMenipis] = await Promise.all([
         cashSummaryQuery,
         hppRowsQuery,
@@ -118,16 +130,13 @@ const ReportController = {
         stokMenipisQuery
       ]);
 
-      // 4. MENGGABUNGKAN DATA
       const total_transaksi = (Number(cashSummary.total_transaksi) || 0) + ppobSummaryData.total_transaksi;
       const income_pos = parseFloat(cashSummary.total_pendapatan) || 0;
       const total_pendapatan = income_pos + ppobSummaryData.total_pendapatan;
-
       const total_diskon = parseFloat(cashSummary.total_diskon) || 0;
       const hpp_pos = parseFloat(hppRows.total_hpp) || 0;
       const total_hpp = hpp_pos + ppobSummaryData.total_hpp;
 
-      // Gabungkan statistik harian
       const combinedDailyMap = {};
       (dailyStats || []).forEach(d => {
         const dStr = d.day instanceof Date ? d.day.toISOString().split('T')[0] : String(d.day);
@@ -151,6 +160,8 @@ const ReportController = {
       const gross_profit = net_revenue - total_hpp;
       const marginValue = net_revenue > 0 ? (gross_profit / net_revenue) * 100 : 0;
 
+      console.log(`📊 [REPORT SUCCESS] Total Trx: ${total_transaksi} | Revenue: ${total_pendapatan}`);
+
       return response.success(res, {
         total_transaksi,
         total_pendapatan,
@@ -167,9 +178,8 @@ const ReportController = {
         daily_list: finalDailyStats,
         top_products: topProducts,
         stok_menipis: stokMenipis,
-        recent_activities: combinedRecent // 🔥 Masukkan data ini ke response
+        recent_activities: combinedRecent
       });
-
     } catch (error) {
       console.error("❌ Summary Report Error:", error);
       return response.error(res, error, 'Gagal mengambil laporan summary');
@@ -179,19 +189,17 @@ const ReportController = {
   async products(req, res) {
     try {
       const { store_id } = req.params;
-      const { start, end } = req.query;
+      const { start, end, timezone } = req.query;
+      const tz = timezone || "+09:00";
 
-      const productsCount = await req.db("products")
-        .count({ total: '*' })
-        .where({ store_id })
-        .first();
+      const productsCount = await req.db("products").count({ total: '*' }).where({ store_id }).first();
 
       let totalSold = 0;
       if (start && end) {
         const sold = await req.db("transaction_items as ti")
           .join("transactions as t", "t.id", "ti.transaction_id")
           .select(req.db.raw("SUM(COALESCE(ti.qty, 0)) as total"))
-          .whereRaw('DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) <= ?', [start, end])
+          .whereRaw(`DATE(CONVERT_TZ(t.created_at, "+00:00", ?)) >= ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", ?)) <= ?`, [tz, start, tz, end])
           .where('t.store_id', store_id)
           .first();
         totalSold = parseInt(sold.total || 0);
@@ -202,6 +210,7 @@ const ReportController = {
         .join("products as p", "p.id", "ti.product_id")
         .join("transactions as t", "t.id", "ti.transaction_id")
         .where('t.store_id', store_id)
+        .whereRaw(`DATE(CONVERT_TZ(t.created_at, "+00:00", ?)) >= ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", ?)) <= ?`, [tz, start, tz, end])
         .groupBy(['ti.product_id', 'p.sku', 'p.name'])
         .orderBy('sold', 'desc')
         .limit(10);
@@ -232,7 +241,8 @@ const ReportController = {
   async cashiers(req, res) {
     try {
       const { store_id } = req.params;
-      const { start, end } = req.query;
+      const { start, end, timezone } = req.query;
+      const tz = timezone || "+09:00";
 
       const cashierQuery = req.db(process.env.DB_NAME + ".users as u")
         .select([
@@ -248,7 +258,7 @@ const ReportController = {
         .groupBy(['u.id', 'u.name', 'u.role']);
 
       if (start && end) {
-        cashierQuery.whereRaw('DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) <= ?', [start, end]);
+        cashierQuery.whereRaw(`DATE(CONVERT_TZ(t.created_at, "+00:00", ?)) >= ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", ?)) <= ?`, [tz, start, tz, end]);
       }
 
       const totalKaryawan = await req.db(process.env.DB_NAME + ".users")
@@ -267,7 +277,7 @@ const ReportController = {
       return response.success(res, {
         total_karyawan: totalKaryawan.total,
         avg_performance: avgPerformance,
-        avg_attendance: 100, // Dummy
+        avg_attendance: 100,
         cashiers: cashierStats
       });
     } catch (err) {
@@ -283,13 +293,8 @@ const ReportController = {
 
       if (!date) return response.badRequest(res, 'Tanggal laporan wajib diisi.');
 
-      const [exist] = await req.db.raw(
-        `SELECT id FROM daily_reports WHERE store_id = ? AND report_date = ?`,
-        [store_id, date]
-      );
-      if (exist.length > 0) {
-        return response.badRequest(res, 'Laporan harian sudah ada untuk tanggal ini.');
-      }
+      const [exist] = await req.db.raw(`SELECT id FROM daily_reports WHERE store_id = ? AND report_date = ?`, [store_id, date]);
+      if (exist.length > 0) return response.badRequest(res, 'Laporan harian sudah ada untuk tanggal ini.');
 
       const [summary] = await req.db.raw(
         `SELECT COUNT(*) AS total_transaksi, COALESCE(SUM(total_cost),0) AS total_pendapatan, COALESCE(SUM(discount_total),0) AS total_diskon
