@@ -333,6 +333,11 @@ const PPOBController = {
 
             await PPOBProductModel.createOrUpdateProducts(allProducts);
 
+            // 🔥 AUDIT TOTAL: Cek berapa produk yang akhirnya ada di DB
+            const totalInDb = await master('ppob_products').count({ total: '*' }).first();
+            const totalPostpaid = await master('ppob_products').where({ type: 'postpaid' }).count({ total: '*' }).first();
+            console.log(`📊 DB STATUS: Total=${totalInDb.total} | Postpaid=${totalPostpaid.total}`);
+
             // Ambil ulang dengan filter
             products = await PPOBProductModel.getAllProducts({
               category: searchCategory || undefined,

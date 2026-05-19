@@ -24,22 +24,25 @@ const PPOBProductModel = {
   async createOrUpdateProducts(products) {
     const trx = await master.transaction();
     try {
-      console.log(`💾 Starting DB Sync for ${products.length} products...`);
+      console.log(`💾 Memulai Sinkronisasi Database (${products.length} produk)...`);
       for (const product of products) {
-        // 🔥 FIX: Digiflazz Postpaid menggunakan field berbeda (admin, commission, status)
         const isPostpaid = product.type === 'postpaid';
+
+        // 🔥 SKU FALLBACK: Digiflazz Postpaid kadang pakai 'product_code' atau 'code'
+        const sku = product.buyer_sku_code || product.product_code || product.code || '';
+        if (!sku) continue;
 
         const data = {
           product_name: product.product_name,
           category: product.category,
           brand: product.brand,
-          // Jika pasca, harga 'beli' awal kita set 0 atau admin, karena nominal diisi manual
+          // Jika pasca, gunakan admin fee sebagai 'harga beli dasar'
           price: isPostpaid ? (parseFloat(product.admin) || 0) : (parseFloat(product.price) || 0),
-          buyer_sku_code: product.buyer_sku_code,
-          type: product.type,
+          buyer_sku_code: sku,
+          type: product.type || 'prepaid',
           is_active: isPostpaid
-            ? (product.status === 1 || product.status === '1') // Field 'status' di Postpaid
-            : (product.buyer_product_status && product.seller_product_status), // Field di Prepaid
+            ? (product.status === 1 || product.status === '1' || String(product.status).toLowerCase() === 'aktif' || String(product.status).toLowerCase() === 'on')
+            : (product.buyer_product_status && product.seller_product_status),
           updated_at: trx.fn.now(),
         }
 
@@ -49,10 +52,10 @@ const PPOBProductModel = {
           .merge(data);
       }
       await trx.commit();
-      console.log(`✅ DB Sync Completed.`);
+      console.log(`✅ Sinkronisasi Database Selesai.`);
     } catch (error) {
       await trx.rollback();
-      console.error(`❌ DB Sync Error:`, error.message);
+      console.error(`❌ Sinkronisasi Database Gagal:`, error.message);
       throw error;
     }
   },

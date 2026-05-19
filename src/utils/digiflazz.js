@@ -55,53 +55,44 @@ function sendDigiflazzRequest(path, payload) {
 
 function normalizeDigiflazzProductList(result) {
   if (!result) return [];
-  const data = result.data;
+  // Digiflazz sering mengembalikan data di dalam field 'data'
+  const data = result.data || result;
   if (!data) return [];
   if (Array.isArray(data)) return data;
   if (Array.isArray(data.data)) return data.data;
-  if (Array.isArray(data.products)) return data.products;
   return [];
 }
 
 function findProductBySku(products, buyer_sku_code) {
   return products.find((item) => {
-    const code = item.buyer_sku_code || item.seller_sku_code || item.code || item.sku || item.product_code || '';
+    const code = item.buyer_sku_code || item.product_code || item.code || item.sku || '';
     return String(code).toLowerCase() === String(buyer_sku_code).toLowerCase();
   });
 }
 
 async function productList(buyer_sku_code = null) {
-  // 🔥 TRACE LOG: Memulai tarikan data
-  console.log(`📡 Fetching Digiflazz Price List [Ref: pricelist, SKU: ${buyer_sku_code || 'ALL'}]...`);
+  try {
+    const prepaidResult = await sendDigiflazzRequest('price-list', {
+      cmd: 'prepaid',
+      ref_id: 'pricelist',
+      code: buyer_sku_code || undefined
+    }).catch(e => { console.error("❌ Digiflazz Prepaid Err:", e.message); return []; });
 
-  const prepaidResult = await sendDigiflazzRequest('price-list', {
-    cmd: 'prepaid',
-    ref_id: 'pricelist',
-    code: buyer_sku_code || undefined
-  });
+    const postpaidResult = await sendDigiflazzRequest('price-list', {
+      cmd: 'postpaid',
+      ref_id: 'pricelist',
+      code: buyer_sku_code || undefined
+    }).catch(e => { console.error("❌ Digiflazz Postpaid Err:", e.message); return []; });
 
-  const postpaidResult = await sendDigiflazzRequest('price-list', {
-    cmd: 'postpaid',
-    ref_id: 'pricelist',
-    code: buyer_sku_code || undefined
-  });
+    // Inject 'type' dan gabungkan
+    const prepaidList = normalizeDigiflazzProductList(prepaidResult).map(p => ({ ...p, type: 'prepaid' }));
+    const postpaidList = normalizeDigiflazzProductList(postpaidResult).map(p => ({ ...p, type: 'postpaid' }));
 
-  // 🔥 TRACE LOG: Cek Raw Response
-  if (postpaidResult?.data) {
-    const rawData = Array.isArray(postpaidResult.data) ? postpaidResult.data : [];
-    console.log(`📦 RAW Postpaid Found: ${rawData.length} items`);
-    if (rawData.length > 0) {
-      console.log(`📝 Sample Postpaid Item:`, JSON.stringify(rawData[0]));
-    }
-  } else {
-    console.log(`⚠️ Postpaid Result empty or error:`, JSON.stringify(postpaidResult));
+    return [...prepaidList, ...postpaidList];
+  } catch (err) {
+    console.error("❌ Product List Sync Fatal Error:", err.message);
+    return [];
   }
-
-  // Inject 'type' agar database bisa membedakan prabayar/pascabayar
-  const prepaidList = normalizeDigiflazzProductList(prepaidResult).map(p => ({ ...p, type: 'prepaid' }));
-  const postpaidList = normalizeDigiflazzProductList(postpaidResult).map(p => ({ ...p, type: 'postpaid' }));
-
-  return [...prepaidList, ...postpaidList];
 }
 
 async function getProductDetail(buyer_sku_code) {
