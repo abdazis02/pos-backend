@@ -462,12 +462,15 @@ const PPOBController = {
         try {
           const digiResult = await Digiflazz.checkTransactionStatus(order.ref_id);
           const digiData = digiResult?.data || digiResult;
+
+          // Digiflazz response code (rc) '00' = sukses, '03' = pending
           const rc = String(digiData?.rc || '');
+          const statusLower = String(digiData?.status || '').toLowerCase();
 
           let newStatus = order.status;
-          if (rc === '00' || String(digiData?.status || '').toLowerCase() === 'sukses') {
+          if (rc === '00' || statusLower === 'sukses') {
             newStatus = 'success';
-          } else if (['06', '07', '08', '09'].includes(rc)) {
+          } else if (['06', '07', '08', '09'].includes(rc) || statusLower === 'gagal') {
             newStatus = 'failed';
           }
 
@@ -477,19 +480,13 @@ const PPOBController = {
               .update({
                 status: newStatus,
                 sn: digiData?.sn || order.sn || '',
-                product_name: digiData?.product_name || order.product_name || null,
-                response: JSON.stringify(digiData),
                 updated_at: new Date(),
               });
-            console.log(`✅ [AutoCheck] Order ${ref_id} diupdate dari '${order.status}' → '${newStatus}'`);
-            // Ambil data terbaru dari DB
+            console.log(`✅ [AutoCheck] Order ${ref_id} updated: ${order.status} → ${newStatus}`);
             order = await PPOBOrderModel.findOrderByRefId(req.db, store_id, ref_id);
-          } else {
-            console.log(`ℹ️ [AutoCheck] Order ${ref_id} masih '${order.status}' (rc=${rc})`);
           }
         } catch (checkErr) {
-          // Jangan gagalkan response jika check-status error
-          console.warn(`⚠️ [AutoCheck] Gagal cek status Digiflazz untuk ${ref_id}:`, checkErr.message);
+          console.warn(`⚠️ [AutoCheck] Gagal poll status ${ref_id}:`, checkErr.message);
         }
       }
 
@@ -514,15 +511,15 @@ const PPOBController = {
 
       const digiResult = await Digiflazz.checkTransactionStatus(order.ref_id);
       const digiData = digiResult?.data || digiResult;
-      const rc = String(digiData?.rc || '');
 
-      let newStatus;
-      if (rc === '00' || String(digiData?.status || '').toLowerCase() === 'sukses') {
+      const rc = String(digiData?.rc || '');
+      const statusLower = String(digiData?.status || '').toLowerCase();
+
+      let newStatus = 'pending';
+      if (rc === '00' || statusLower === 'sukses') {
         newStatus = 'success';
-      } else if (['06', '07', '08', '09'].includes(rc)) {
+      } else if (['06', '07', '08', '09'].includes(rc) || statusLower === 'gagal') {
         newStatus = 'failed';
-      } else {
-        newStatus = 'pending';
       }
 
       await req.db('ppob_orders')
@@ -530,17 +527,15 @@ const PPOBController = {
         .update({
           status: newStatus,
           sn: digiData?.sn || order.sn || '',
-          product_name: digiData?.product_name || order.product_name || null,
-          response: JSON.stringify(digiData),
           updated_at: new Date(),
         });
 
       const updatedOrder = await PPOBOrderModel.findOrderByRefId(req.db, store_id, ref_id);
-      console.log(`🔄 [ManualCheck] Order ${ref_id} diupdate ke: ${newStatus} (rc=${rc})`);
-      return response.success(res, updatedOrder, `Status order diperbarui: ${newStatus}`);
+      console.log(`🔄 [ManualCheck] Order ${ref_id} result: ${newStatus} (rc=${rc})`);
+      return response.success(res, updatedOrder, `Status diperbarui ke: ${newStatus}`);
     } catch (error) {
       console.error('PPOB check-status error:', error);
-      return response.error(res, error, 'Gagal memeriksa status order PPOB ke Digiflazz');
+      return response.error(res, error, 'Gagal memeriksa status ke Digiflazz');
     }
   },
 };

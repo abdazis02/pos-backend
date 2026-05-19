@@ -154,14 +154,13 @@ async function checkInquiry({ buyer_sku_code, customer_no, ref_id }) {
 }
 
 /**
- * 🔥 Cek Status Transaksi di Digiflazz menggunakan ref_id
- * Berguna sebagai fallback jika webhook gagal terkirim
+ * 🔥 Tambahan fungsi Cek Status Transaksi (Polling)
  */
 async function checkTransactionStatus(ref_id) {
+  if (!ref_id) throw new Error('ref_id wajib diisi untuk cek status');
   return sendDigiflazzRequest('transaction', {
-    commands: 'check-status',
+    commands: 'status',
     ref_id,
-    // sign akan di-generate otomatis oleh sendDigiflazzRequest → buildSignature(ref_id)
   });
 }
 
@@ -170,5 +169,5 @@ module.exports = {
   productList,
   getProductDetail,
   checkInquiry,
-  checkTransactionStatus,
+  checkTransactionStatus, // 🔥 Export fungsi baru
 };
