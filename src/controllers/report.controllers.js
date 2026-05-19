@@ -5,11 +5,12 @@ const ReportController = {
   async summary(req, res) {
     try {
       const { store_id } = req.params;
-      const { start, end, payment_method } = req.query;
+      const { start, end, payment_method, timezone } = req.query;
+      const tz = timezone || "+09:00"; // Fallback ke WIT jika tidak ada
 
       // 1. KASIR SUMMARY (POS)
       const cashSummaryQuery = req.db("transactions").where({ store_id })
-        .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
+        .whereRaw(`DATE(CONVERT_TZ(created_at, "+00:00", ?)) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", ?)) <= ?`, [tz, start, tz, end])
         .select(req.db.raw('COUNT(*) as total_transaksi'))
         .select(req.db.raw('CAST(SUM(total_cost) AS DECIMAL(18,2)) AS total_pendapatan'))
         .select(req.db.raw('CAST(SUM(discount_total) AS DECIMAL(18,2)) AS total_diskon'))
@@ -21,21 +22,21 @@ const ReportController = {
 
       // HPP POS
       const hppRowsQuery = req.db("transaction_items as ti").where('t.store_id', store_id)
-        .whereRaw('DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) <= ?', [start, end])
+        .whereRaw(`DATE(CONVERT_TZ(t.created_at, "+00:00", ?)) >= ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", ?)) <= ?`, [tz, start, tz, end])
         .join("transactions as t", "t.id", "ti.transaction_id")
         .select(req.db.raw('COALESCE(SUM(ti.cost_price * ti.qty), 0) AS total_hpp'))
         .first();
 
       // Statistik harian POS
       const dailyStatsQuery = req.db("transactions").where({ store_id })
-        .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
-        .select(req.db.raw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) as day'))
+        .whereRaw(`DATE(CONVERT_TZ(created_at, "+00:00", ?)) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", ?)) <= ?`, [tz, start, tz, end])
+        .select(req.db.raw(`DATE(CONVERT_TZ(created_at, "+00:00", ?)) as day`, [tz]))
         .select(req.db.raw('SUM(total_cost) as total'))
         .groupBy('day');
 
       // Top produk POS
       const topProductsQuery = req.db("transaction_items as ti").where('t.store_id', store_id)
-        .whereRaw('DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) <= ?', [start, end])
+        .whereRaw(`DATE(CONVERT_TZ(t.created_at, "+00:00", ?)) >= ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", ?)) <= ?`, [tz, start, tz, end])
         .join("products as p", "p.id", "ti.product_id")
         .join("transactions as t", "t.id", "ti.transaction_id")
         .select('ti.product_id')
@@ -60,7 +61,7 @@ const ReportController = {
         const hasPpobTable = await req.db.schema.hasTable('ppob_orders');
         if (hasPpobTable) {
           const pSum = await req.db("ppob_orders").where({ store_id, status: 'success' })
-            .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
+            .whereRaw(`DATE(CONVERT_TZ(created_at, "+00:00", ?)) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", ?)) <= ?`, [tz, start, tz, end])
             .select(req.db.raw('COUNT(*) as total_transaksi'))
             .select(req.db.raw('COALESCE(SUM(sale_price), 0) AS total_pendapatan'))
             .select(req.db.raw('COALESCE(SUM(price), 0) AS total_hpp'))
@@ -77,8 +78,8 @@ const ReportController = {
           }
 
           ppobDaily = await req.db("ppob_orders").where({ store_id, status: 'success' })
-            .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
-            .select(req.db.raw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) as day'))
+            .whereRaw(`DATE(CONVERT_TZ(created_at, "+00:00", ?)) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", ?)) <= ?`, [tz, start, tz, end])
+            .select(req.db.raw(`DATE(CONVERT_TZ(created_at, "+00:00", ?)) as day`, [tz]))
             .select(req.db.raw('SUM(sale_price) as total'))
             .groupBy('day');
         }
@@ -88,7 +89,7 @@ const ReportController = {
 
       // 🔥 3. RECENT ACTIVITIES (GABUNGAN POS + PPOB)
       const recentTransactions = await req.db("transactions").where({ store_id, payment_status: 'paid' })
-        .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
+        .whereRaw(`DATE(CONVERT_TZ(created_at, "+00:00", ?)) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", ?)) <= ?`, [tz, start, tz, end])
         .select('created_at', req.db.raw('"POS" as source'), 'payment_method as type', 'total_cost as amount')
         .orderBy('created_at', 'desc')
         .limit(10);
@@ -97,7 +98,7 @@ const ReportController = {
       try {
         if (await req.db.schema.hasTable('ppob_orders')) {
           recentPpob = await req.db("ppob_orders").where({ store_id, status: 'success' })
-            .whereRaw('DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) <= ?', [start, end])
+            .whereRaw(`DATE(CONVERT_TZ(created_at, "+00:00", ?)) >= ? AND DATE(CONVERT_TZ(created_at, "+00:00", ?)) <= ?`, [tz, start, tz, end])
             .select('created_at', req.db.raw('"PPOB" as source'), 'buyer_sku_code as type', 'sale_price as amount')
             .orderBy('created_at', 'desc')
             .limit(10);
@@ -277,7 +278,8 @@ const ReportController = {
   async generateDailyReport(req, res) {
     try {
       const { store_id } = req.params;
-      const { date } = req.query;
+      const { date, timezone } = req.query;
+      const tz = timezone || "+09:00";
 
       if (!date) return response.badRequest(res, 'Tanggal laporan wajib diisi.');
 
@@ -291,15 +293,15 @@ const ReportController = {
 
       const [summary] = await req.db.raw(
         `SELECT COUNT(*) AS total_transaksi, COALESCE(SUM(total_cost),0) AS total_pendapatan, COALESCE(SUM(discount_total),0) AS total_diskon
-         FROM transactions WHERE store_id = ? AND DATE(CONVERT_TZ(created_at, "+00:00", "+09:00")) = ?`,
-        [store_id, date]
+         FROM transactions WHERE store_id = ? AND DATE(CONVERT_TZ(created_at, "+00:00", ?)) = ?`,
+        [store_id, tz, date]
       );
 
       const [hppRows] = await req.db.raw(
         `SELECT COALESCE(SUM(ti.cost_price * ti.qty), 0) AS total_hpp
          FROM transaction_items ti JOIN transactions t ON ti.transaction_id = t.id
-         WHERE t.store_id = ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", "+09:00")) = ?`,
-        [store_id, date]
+         WHERE t.store_id = ? AND DATE(CONVERT_TZ(t.created_at, "+00:00", ?)) = ?`,
+        [store_id, tz, date]
       );
 
       const total_hpp = Number(hppRows[0].total_hpp) || 0;
