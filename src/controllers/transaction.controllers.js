@@ -34,9 +34,9 @@ function mapTransactionToFrontend(tx, owner_id, items = []) {
     tax: tx.tax,
     tax_percentage: tx.tax_percentage,
     notes: tx.notes,
-    // 🔥 FIX FINAL: Kirim waktu dalam format UTC (Z) yang murni
-    // Agar .toLocal() di Flutter bisa mengonversi ke WIT dengan tepat tanpa selisih jam
-    created_at: moment.utc(tx.created_at).toISOString(),
+    // 🔥 FIX RADIKAL: Gunakan moment untuk format string murni tanpa offset 'Z'
+    // Agar HP tidak mencoba menggeser waktu lagi
+    created_at: moment(tx.created_at).format('YYYY-MM-DD HH:mm:ss'),
     items: items.map(item => ({
       productId: item.product_id,
       name: item.product_name,
