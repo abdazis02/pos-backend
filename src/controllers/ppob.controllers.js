@@ -294,14 +294,14 @@ const PPOBController = {
 
       if (category === 'PLN Token' || category === 'PLN Pasca' || category === 'PLN Tagihan') {
         searchCategory = 'PLN';
-      } else if (category === 'E-Money' || category === 'E-Money Bebas Nominal' || category === 'E-Money Tagihan') {
+      } else if (category === 'E-Money' || category === 'E-Money Tagihan') {
         searchCategory = 'E-Money';
-        // 🔥 Jika request dari tab "Bebas Nominal" (Pascabayar), filter hanya yang type pascabayar
-        if (category === 'E-Money Bebas Nominal' || category === 'E-Money Tagihan') {
-          searchType = 'postpaid';
-        } else {
-          searchType = 'prepaid';
-        }
+        searchType = 'prepaid'; // Tab E-money biasa hanya ambil prepaid
+      } else if (category === 'E-Money Bebas Nominal') {
+        // 🔥 FIX KRITIKAL: E-Money Bebas Nominal di Digiflazz menggunakan kategori "E-MONEY" (HURUF BESAR SEMUA)
+        // Dan tipenya adalah 'postpaid'
+        searchCategory = 'E-MONEY';
+        searchType = 'postpaid';
       }
 
       // 1. CEK APAKAH HARUS PAKSA SYNC
