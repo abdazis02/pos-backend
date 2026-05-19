@@ -321,7 +321,7 @@ const PPOBController = {
               category: searchCategory || undefined,
               type: searchType
             });
-            console.log(`✅ Sinkronisasi Berhasil. Total: ${allProducts.length} produk.`);
+            console.log(`✅ Sinkronisasi Berhasil. Ditemukan ${products.length} produk untuk filter ini.`);
           }
         } catch (syncErr) {
           console.error("❌ Gagal Sinkronisasi Digiflazz:", syncErr.message);

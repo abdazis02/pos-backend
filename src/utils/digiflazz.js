@@ -101,11 +101,14 @@ async function purchase({ buyer_sku_code, customer_no, ref_id }) {
     throw new Error('buyer_sku_code, dan customer_no wajib diisi');
   }
 
-  // 🔥 DETEKSI OTOMATIS: Ambil detail produk untuk menentukan cmd (prepaid/postpaid)
-  const product = await getProductDetail(buyer_sku_code);
-  const isPostpaid = product?.category?.toLowerCase().includes('pascabayar') ||
-                     product?.type?.toLowerCase().includes('pascabayar') ||
-                     ['PLN PASCABAYAR', 'PDAM', 'BPJS', 'TELKOM'].includes(product?.brand?.toUpperCase());
+  // 🔥 AMBIL DATA DARI DATABASE LOKAL (Bukan tarik ulang dari Digiflazz)
+  // Agar kita tahu 'type' produknya (prepaid/postpaid)
+  const PPOBProductModel = require('../models/ppobProduct.model');
+  const product = await PPOBProductModel.getAllProducts().where({ buyer_sku_code }).first();
+
+  const isPostpaid = product?.type === 'postpaid' ||
+                     product?.category?.toLowerCase().includes('pascabayar') ||
+                     ['PLN PASCABAYAR', 'PDAM', 'BPJS', 'TELKOM', 'E-MONEY'].includes(product?.brand?.toUpperCase());
 
   const payload = {
     testing: process.env.NODE_ENV !== 'production',
@@ -115,8 +118,10 @@ async function purchase({ buyer_sku_code, customer_no, ref_id }) {
     ref_id,
   };
 
-  // Jika pascabayar, gunakan endpoint 'pay-pasca', jika prabayar gunakan 'transaction'
+  // Jika pascabayar, gunakan endpoint 'pay-pasca'
   const endpoint = isPostpaid ? 'pay-pasca' : 'transaction';
+
+  console.log(`🚀 Digiflazz Req [${endpoint}]: ${buyer_sku_code} to ${customer_no}`);
 
   return sendDigiflazzRequest(endpoint, payload);
 }

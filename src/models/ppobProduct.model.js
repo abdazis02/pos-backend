@@ -25,14 +25,20 @@ const PPOBProductModel = {
     const trx = await master.transaction();
     try {
       for (const product of products) {
+        // 🔥 FIX: Digiflazz Postpaid menggunakan field berbeda (admin, commission, status)
+        const isPostpaid = product.type === 'postpaid';
+
         const data = {
           product_name: product.product_name,
           category: product.category,
           brand: product.brand,
-          price: product.price,
+          // Jika pasca, harga 'beli' awal kita set 0 atau admin, karena nominal diisi manual
+          price: isPostpaid ? (parseFloat(product.admin) || 0) : (parseFloat(product.price) || 0),
           buyer_sku_code: product.buyer_sku_code,
           type: product.type,
-          is_active: product.buyer_product_status && product.seller_product_status,
+          is_active: isPostpaid
+            ? (product.status === 1 || product.status === '1') // Field 'status' di Postpaid
+            : (product.buyer_product_status && product.seller_product_status), // Field di Prepaid
           updated_at: trx.fn.now(),
         }
 
