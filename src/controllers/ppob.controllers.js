@@ -292,15 +292,28 @@ const PPOBController = {
       let searchCategory = category;
       let searchType = undefined;
 
-      if (category === 'PLN Token' || category === 'PLN Pasca' || category === 'PLN Tagihan') {
-        searchCategory = 'PLN';
-      } else if (category === 'E-Money' || category === 'E-Money Tagihan') {
+      const lowerCat = String(category || '').toLowerCase();
+
+      if (lowerCat.includes('pln')) {
+        searchCategory = 'PLN PASCABAYAR';
+      } else if (lowerCat.includes('bpjs')) {
+        searchCategory = 'BPJS KESEHATAN';
+      } else if (lowerCat.includes('pdam')) {
+        searchCategory = 'PDAM';
+      } else if (lowerCat.includes('telkom')) {
+        searchCategory = 'INTERNET PASCABAYAR';
+      } else if (lowerCat.includes('multifinance')) {
+        searchCategory = 'MULTIFINANCE';
+      } else if (lowerCat.includes('internet')) {
+        searchCategory = 'INTERNET PASCABAYAR';
+      } else if (lowerCat.includes('e-money')) {
         searchCategory = 'E-Money';
-        searchType = 'prepaid'; // Tab E-money biasa hanya ambil prepaid
-      } else if (category === 'E-Money Bebas Nominal') {
-        // 🔥 Mapping Fleksibel: Cari 'E-Money' atau 'E-MONEY' untuk tipe pascabayar
-        searchCategory = 'E-Money';
-        searchType = 'postpaid';
+        searchType = 'prepaid';
+
+        if (lowerCat.includes('bebas') || lowerCat.includes('nominal') || lowerCat.includes('tagihan')) {
+           searchCategory = 'E-MONEY';
+           searchType = 'postpaid';
+        }
       }
 
       // 1. CEK APAKAH HARUS PAKSA SYNC

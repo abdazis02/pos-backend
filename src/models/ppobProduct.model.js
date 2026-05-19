@@ -24,6 +24,7 @@ const PPOBProductModel = {
   async createOrUpdateProducts(products) {
     const trx = await master.transaction();
     try {
+      console.log(`💾 Starting DB Sync for ${products.length} products...`);
       for (const product of products) {
         // 🔥 FIX: Digiflazz Postpaid menggunakan field berbeda (admin, commission, status)
         const isPostpaid = product.type === 'postpaid';
@@ -48,8 +49,10 @@ const PPOBProductModel = {
           .merge(data);
       }
       await trx.commit();
+      console.log(`✅ DB Sync Completed.`);
     } catch (error) {
       await trx.rollback();
+      console.error(`❌ DB Sync Error:`, error.message);
       throw error;
     }
   },
