@@ -209,8 +209,9 @@ const PPOBController = {
         buyer_sku_code: value.buyer_sku_code,
         customer_no: value.customer_no,
         ref_id,
-        product_name: result?.data?.product_name || null,
-        price: basePrice, // 🔥 Gunakan basePrice
+        // 🔥 AMBIL NAMA ASLI PRODUK DARI CACHE LOKAL JIKA DARI DIGIFLAZZ KOSONG
+        product_name: result?.data?.product_name || product.product_name || value.buyer_sku_code,
+        price: basePrice,
         sale_price: value.sale_price,
         status: (() => {
           const rc = String(result?.rc || '');
@@ -317,18 +318,23 @@ const PPOBController = {
 
       // Normalisasi status berdasarkan RC (Response Code) Digiflazz
       let normalizedStatus = 'pending';
-      if (String(rc) === '00') {
+      const statusLower = String(status || '').toLowerCase();
+
+      if (String(rc) === '00' || statusLower === 'sukses') {
         normalizedStatus = 'success';
-      } else if (['06', '07', '08', '09'].includes(String(rc))) {
+      } else if (['06', '07', '08', '09'].includes(String(rc)) || statusLower === 'gagal') {
         normalizedStatus = 'failed';
       }
+
+      // 🔥 EXTRACT SN: SN bisa di field 'sn' atau di dalam 'message'
+      const finalSn = sn || (statusLower === 'sukses' ? data.message : '');
 
       // Update tabel ppob_orders di database tenant
       await tenantDb('ppob_orders')
         .where('ref_id', ref_id)
         .update({
           status: normalizedStatus,
-          sn: sn || '',
+          sn: finalSn || '',
           response: JSON.stringify(data),
           updated_at: new Date()
         });
@@ -456,6 +462,18 @@ const PPOBController = {
         PPOBOrderModel.paginateOrders(req.db, store_id, offset, value.itemsPerPage, { search: value.q })
       );
 
+      // 🔥 AUTO-FIX: Isi nama produk yang kosong dari tabel ppob_products (Master)
+      const skus = [...new Set(items.filter(i => !i.product_name || i.product_name === i.buyer_sku_code).map(i => i.buyer_sku_code))];
+      if (skus.length > 0) {
+        const productRows = await master('ppob_products').whereIn('buyer_sku_code', skus).select('buyer_sku_code', 'product_name');
+        const nameMap = Object.fromEntries(productRows.map(p => [p.buyer_sku_code, p.product_name]));
+        items.forEach(i => {
+          if ((!i.product_name || i.product_name === i.buyer_sku_code) && nameMap[i.buyer_sku_code]) {
+            i.product_name = nameMap[i.buyer_sku_code];
+          }
+        });
+      }
+
       return response.success(res, {
         items,
         total: total.cnt,
@@ -473,6 +491,12 @@ const PPOBController = {
       let order = await PPOBOrderModel.findOrderByRefId(req.db, store_id, ref_id);
       if (!order) {
         return response.notFound(res, 'Order PPOB tidak ditemukan');
+      }
+
+      // 🔥 AUTO-FIX: Isi nama produk jika kosong atau hanya SKU
+      if (!order.product_name || order.product_name === order.buyer_sku_code) {
+        const prod = await master('ppob_products').where('buyer_sku_code', order.buyer_sku_code).first();
+        if (prod) order.product_name = prod.product_name;
       }
 
       // 🔥 AUTO CHECK-STATUS: Jika masih pending, otomatis cek ke Digiflazz
@@ -525,6 +549,12 @@ const PPOBController = {
       const order = await PPOBOrderModel.findOrderByRefId(req.db, store_id, ref_id);
       if (!order) {
         return response.notFound(res, 'Order PPOB tidak ditemukan');
+      }
+
+      // 🔥 AUTO-FIX: Isi nama produk jika kosong atau hanya SKU
+      if (!order.product_name || order.product_name === order.buyer_sku_code) {
+        const prod = await master('ppob_products').where('buyer_sku_code', order.buyer_sku_code).first();
+        if (prod) order.product_name = prod.product_name;
       }
 
       const digiResult = await Digiflazz.checkTransactionStatus(order.ref_id);

@@ -1,5 +1,6 @@
 const response = require('../utils/response');
 const ActivityLogModel = require('../models/activityLog.model');
+const master = require('../config/knexMaster'); // 🔥 Import Master DB
 
 const ReportController = {
   async summary(req, res) {
@@ -8,7 +9,8 @@ const ReportController = {
       const { start, end, payment_method } = req.query;
 
       // 🚀 DATABASE SUDAH HARDLOCK +09:00 via Knex Config
-      // Kita tidak perlu lagi CONVERT_TZ di setiap query.
+      const baseTz = "+00:00";
+      const targetTz = "+09:00";
 
       // 1. KASIR SUMMARY (POS)
       const cashSummaryQuery = req.db("transactions").where({ store_id })
@@ -54,9 +56,10 @@ const ReportController = {
         .select('id', 'name', 'stock as remaining')
         .where('stock', '<=', 5);
 
-      // 2. PPOB SUMMARY
+      // 2. PPOB SUMMARY & TOP PRODUCTS
       let ppobSummaryData = { total_transaksi: 0, total_pendapatan: 0, total_profit: 0, total_hpp: 0 };
       let ppobDaily = [];
+      let ppobTopProducts = [];
 
       try {
         const hasPpobTable = await req.db.schema.hasTable('ppob_orders');
@@ -83,6 +86,30 @@ const ReportController = {
             .select(req.db.raw(`DATE(created_at) as day`))
             .select(req.db.raw('SUM(sale_price) as total'))
             .groupBy('day');
+
+          // 🔥 TOP PPOB PRODUCTS
+          const rawPpobTop = await req.db("ppob_orders").where({ store_id, status: 'success' })
+            .whereRaw(`DATE(created_at) >= ? AND DATE(created_at) <= ?`, [start, end])
+            .select('buyer_sku_code as sku')
+            .select(req.db.raw('MAX(COALESCE(product_name, buyer_sku_code)) as name'))
+            .select(req.db.raw('COUNT(*) as sold'))
+            .select(req.db.raw('SUM(sale_price) as revenue'))
+            .groupBy('sku')
+            .orderBy('sold', 'desc')
+            .limit(10);
+
+          // Fix names from Master DB
+          const skus = rawPpobTop.map(r => r.sku);
+          const masterProds = await master("ppob_products").whereIn('buyer_sku_code', skus).select('buyer_sku_code', 'product_name');
+          const nameMap = Object.fromEntries(masterProds.map(p => [p.buyer_sku_code, p.product_name]));
+
+          ppobTopProducts = rawPpobTop.map(r => ({
+            product_id: "PPOB",
+            sku: r.sku,
+            name: nameMap[r.sku] || r.name,
+            sold: r.sold,
+            revenue: r.revenue
+          }));
         }
       } catch (e) {}
 
@@ -149,6 +176,11 @@ const ReportController = {
       const gross_profit = net_revenue - total_hpp;
       const marginValue = net_revenue > 0 ? (gross_profit / net_revenue) * 100 : 0;
 
+      // 🔥 GABUNGKAN TOP PRODUCTS (POS + PPOB)
+      const finalTopProducts = [...topProducts, ...ppobTopProducts]
+        .sort((a, b) => b.sold - a.sold)
+        .slice(0, 10);
+
       return response.success(res, {
         total_transaksi,
         total_pendapatan,
@@ -163,7 +195,7 @@ const ReportController = {
         lowest_sales_day: lowestValue,
         avg_daily: dailyValues.length ? Math.round(total_pendapatan / dailyValues.length) : 0,
         daily_list: finalDailyStats,
-        top_products: topProducts,
+        top_products: finalTopProducts, // 🔥 Hasil gabungan
         stok_menipis: stokMenipis,
         recent_activities: combinedRecent
       });
@@ -182,16 +214,31 @@ const ReportController = {
 
       let totalSold = 0;
       if (start && end) {
+        // POS Sold
         const sold = await req.db("transaction_items as ti")
           .join("transactions as t", "t.id", "ti.transaction_id")
           .select(req.db.raw("SUM(COALESCE(ti.qty, 0)) as total"))
           .whereRaw(`DATE(t.created_at) >= ? AND DATE(t.created_at) <= ?`, [start, end])
           .where('t.store_id', store_id)
           .first();
-        totalSold = parseInt(sold.total || 0);
+
+        // PPOB Sold
+        let ppobSold = 0;
+        try {
+          const hasPpob = await req.db.schema.hasTable('ppob_orders');
+          if (hasPpob) {
+            const pSold = await req.db("ppob_orders").where({ store_id, status: 'success' })
+              .whereRaw(`DATE(created_at) >= ? AND DATE(created_at) <= ?`, [start, end])
+              .count({ cnt: '*' }).first();
+            ppobSold = Number(pSold.cnt) || 0;
+          }
+        } catch (e) {}
+
+        totalSold = parseInt(sold.total || 0) + ppobSold;
       }
 
-      const topProducts = await req.db("transaction_items as ti")
+      // Top POS
+      const topPos = await req.db("transaction_items as ti")
         .select(req.db.raw('ti.product_id, p.sku, p.name, CAST(SUM(ti.qty) AS SIGNED) AS sold, CAST(SUM(ti.qty * ti.price) AS DECIMAL(18,2)) AS revenue'))
         .join("products as p", "p.id", "ti.product_id")
         .join("transactions as t", "t.id", "ti.transaction_id")
@@ -200,6 +247,39 @@ const ReportController = {
         .groupBy(['ti.product_id', 'p.sku', 'p.name'])
         .orderBy('sold', 'desc')
         .limit(10);
+
+      // Top PPOB
+      let topPpob = [];
+      try {
+        const hasPpob = await req.db.schema.hasTable('ppob_orders');
+        if (hasPpob) {
+          const rawPpob = await req.db("ppob_orders").where({ store_id, status: 'success' })
+            .whereRaw(`DATE(created_at) >= ? AND DATE(created_at) <= ?`, [start, end])
+            .select('buyer_sku_code as sku')
+            .select(req.db.raw('MAX(COALESCE(product_name, buyer_sku_code)) as name'))
+            .select(req.db.raw('COUNT(*) as sold'))
+            .select(req.db.raw('SUM(sale_price) as revenue'))
+            .groupBy('sku')
+            .orderBy('sold', 'desc')
+            .limit(10);
+
+          const skus = rawPpob.map(r => r.sku);
+          const masterProds = await master("ppob_products").whereIn('buyer_sku_code', skus).select('buyer_sku_code', 'product_name');
+          const nameMap = Object.fromEntries(masterProds.map(p => [p.buyer_sku_code, p.product_name]));
+
+          topPpob = rawPpob.map(r => ({
+            product_id: "PPOB",
+            sku: r.sku,
+            name: nameMap[r.sku] || r.name,
+            sold: r.sold,
+            revenue: r.revenue
+          }));
+        }
+      } catch (e) {}
+
+      const mergedTop = [...topPos, ...topPpob]
+        .sort((a, b) => b.sold - a.sold)
+        .slice(0, 10);
 
       const stokMenipis = await req.db("products")
         .select(['id', 'name', 'stock as remaining'])
@@ -215,7 +295,7 @@ const ReportController = {
       return response.success(res, {
         total_products: productsCount.total,
         total_sold: totalSold,
-        top_products: topProducts,
+        top_products: mergedTop,
         stok_menipis: stokMenipis,
         stok_habis: stokHabis.total
       });
