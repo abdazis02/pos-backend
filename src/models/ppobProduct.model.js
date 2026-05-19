@@ -15,7 +15,11 @@ const PPOBProductModel = {
 
     if (filters.category) {
       // 🔥 Gunakan WHERE LIKE agar pencarian kategori lebih fleksibel (misal: E-Money vs E-MONEY)
-      query = query.where('category', 'like', `%${filters.category}%`);
+      // 🔥 FIX: Cari juga di kolom 'brand', karena Digiflazz Pascabayar menaruh detail kategori di 'brand'
+      query = query.where(function() {
+        this.where('category', 'like', `%${filters.category}%`)
+            .orWhere('brand', 'like', `%${filters.category}%`);
+      });
     }
 
     return query.orderBy('product_name');

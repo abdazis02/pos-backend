@@ -286,11 +286,11 @@ const PPOBController = {
 
   async listProducts(req, res) {
     try {
-      // 🔥 AUTO-FIX DB: Bypass Digiflazz rate limit & is_active bug
+      // 🔥 AUTO-FIX DB: Bypass Digiflazz rate limit & is_active bug untuk SEMUA pascabayar
       await master('ppob_products')
-        .whereIn('buyer_sku_code', ['dana1', 'gopay1', 'ovo1', 'shopee1'])
-        .update({ category: 'E-Money', is_active: 1 })
-        .catch(e => console.error("Auto-fix error:", e));
+        .where('type', 'postpaid')
+        .update({ is_active: 1 })
+        .catch(e => console.error("Auto-fix is_active error:", e));
 
       let { category, force_sync } = req.query;
 
