@@ -4,6 +4,7 @@ require('dotenv').config();
 const server = require('./app');
 const master = require('./config/knexMaster');
 const { getTenantConnection } = require('./config/knexTenant');
+const { startPpobSyncJob } = require('./jobs/ppobSync.job');
 
 const PORT = process.env.PORT || 5000;
 
@@ -21,4 +22,7 @@ server.listen(PORT, async () => {
     console.log('├── /api/auth/* - Authentication endpoints');
     console.log('├── /api/stores/* - Store management');
     console.log('└── / - API Documentation');
-});
+
+    // 🔄 Mulai auto-sync produk PPOB dari Digiflazz
+    startPpobSyncJob();
+});

@@ -405,9 +405,11 @@ const PPOBController = {
   async syncProducts(req, res) {
     try {
       const allProducts = await Digiflazz.productList();
-
+      if (!allProducts || allProducts.length === 0) {
+        return response.badRequest(res, 'Tidak ada produk yang diterima dari Digiflazz');
+      }
       await PPOBProductModel.createOrUpdateProducts(allProducts);
-      return response.success(res, { synced: allProducts.length }, 'Produk PPOB berhasil disinkronkan');
+      return response.success(res, { synced: allProducts.length }, `${allProducts.length} produk PPOB berhasil disinkronkan dari Digiflazz`);
     } catch (error) {
       console.error('PPOB sync products error:', error);
       return response.error(res, error, 'Gagal menyinkronkan produk PPOB');
