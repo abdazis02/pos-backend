@@ -7,10 +7,12 @@ const ReportController = {
       const { store_id } = req.params;
       const { start, end, payment_method, timezone } = req.query;
 
-      // 🔥 FIX TIMEZONE: Database ternyata sudah menyimpan dalam WIT (+09:00).
-      // Kita gunakan +09:00 sebagai base, dan konversi ke TZ perangkat (biasanya +09:00 juga).
-      const baseTz = "+09:00";
+      // 🔥 STANDARISASI: Database (TIMESTAMP) adalah UTC (+00:00).
+      // Kita konversi ke Timezone HP user untuk memfilter Tanggal yang pas.
+      const baseTz = "+00:00";
       const targetTz = timezone || "+09:00";
+
+      console.log(`🔍 [REPORT SYNC] Store: ${store_id} | Range: ${start} to ${end} | TZ: ${targetTz}`);
 
       // 1. KASIR SUMMARY (POS)
       const cashSummaryQuery = req.db("transactions").where({ store_id })
@@ -91,10 +93,11 @@ const ReportController = {
         console.warn("PPOB Data Fetch Skip:", e.message);
       }
 
-      // 3. RECENT ACTIVITIES (GABUNGAN POS + PPOB)
+      // 🔥 3. RECENT ACTIVITIES (FIX WAKTU: Kirim format string agar tidak bergeser di HP)
       const recentTransactions = await req.db("transactions").where({ store_id, payment_status: 'paid' })
         .whereRaw(`DATE(CONVERT_TZ(created_at, ?, ?)) >= ? AND DATE(CONVERT_TZ(created_at, ?, ?)) <= ?`, [baseTz, targetTz, start, baseTz, targetTz, end])
-        .select('created_at', req.db.raw('"POS" as source'), 'payment_method as type', 'total_cost as amount')
+        .select(req.db.raw(`DATE_FORMAT(CONVERT_TZ(created_at, ?, ?), '%Y-%m-%d %H:%i:%s') as created_at`, [baseTz, targetTz]))
+        .select(req.db.raw('"POS" as source'), 'payment_method as type', 'total_cost as amount')
         .orderBy('created_at', 'desc')
         .limit(15);
 
@@ -103,7 +106,8 @@ const ReportController = {
         if (await req.db.schema.hasTable('ppob_orders')) {
           recentPpob = await req.db("ppob_orders").where({ store_id, status: 'success' })
             .whereRaw(`DATE(CONVERT_TZ(created_at, ?, ?)) >= ? AND DATE(CONVERT_TZ(created_at, ?, ?)) <= ?`, [baseTz, targetTz, start, baseTz, targetTz, end])
-            .select('created_at', req.db.raw('"PPOB" as source'), 'buyer_sku_code as type', 'sale_price as amount')
+            .select(req.db.raw(`DATE_FORMAT(CONVERT_TZ(created_at, ?, ?), '%Y-%m-%d %H:%i:%s') as created_at`, [baseTz, targetTz]))
+            .select(req.db.raw('"PPOB" as source'), 'buyer_sku_code as type', 'sale_price as amount')
             .orderBy('created_at', 'desc')
             .limit(15);
         }
@@ -113,7 +117,7 @@ const ReportController = {
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
         .slice(0, 15);
 
-      // 4. EXECUTE SUMMARY QUERIES
+      // 4. EXECUTE ALL QUERIES
       const [cashSummary, hppRows, dailyStats, topProducts, stokMenipis] = await Promise.all([
         cashSummaryQuery,
         hppRowsQuery,
@@ -152,8 +156,6 @@ const ReportController = {
       const gross_profit = net_revenue - total_hpp;
       const marginValue = net_revenue > 0 ? (gross_profit / net_revenue) * 100 : 0;
 
-      console.log(`📊 [REPORT SYNC] Store: ${store_id} | Trx: ${total_transaksi} | Revenue: ${total_pendapatan} | TZ: ${targetTz}`);
-
       return response.success(res, {
         total_transaksi,
         total_pendapatan,
@@ -182,7 +184,7 @@ const ReportController = {
     try {
       const { store_id } = req.params;
       const { start, end, timezone } = req.query;
-      const baseTz = "+09:00";
+      const baseTz = "+00:00";
       const targetTz = timezone || "+09:00";
 
       const productsCount = await req.db("products").count({ total: '*' }).where({ store_id }).first();
@@ -235,7 +237,7 @@ const ReportController = {
     try {
       const { store_id } = req.params;
       const { start, end, timezone } = req.query;
-      const baseTz = "+09:00";
+      const baseTz = "+00:00";
       const targetTz = timezone || "+09:00";
 
       const cashierQuery = req.db(process.env.DB_NAME + ".users as u")
@@ -283,7 +285,7 @@ const ReportController = {
     try {
       const { store_id } = req.params;
       const { date, timezone } = req.query;
-      const baseTz = "+09:00";
+      const baseTz = "+00:00";
       const targetTz = timezone || "+09:00";
 
       if (!date) return response.badRequest(res, 'Tanggal laporan wajib diisi.');
