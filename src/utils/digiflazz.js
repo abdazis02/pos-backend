@@ -79,7 +79,7 @@ async function productList(buyer_sku_code = null) {
     }).catch(e => { console.error("❌ Digiflazz Prepaid Err:", e.message); return []; });
 
     const postpaidResult = await sendDigiflazzRequest('price-list', {
-      cmd: 'postpaid',
+      cmd: 'pasca',
       ref_id: 'pricelist',
       code: buyer_sku_code || undefined
     }).catch(e => { console.error("❌ Digiflazz Postpaid Err:", e.message); return []; });
