@@ -39,27 +39,35 @@ function getDigiflazzWebhookSecret() {
 function verifyDigiflazzWebhook(req, body) {
   const signatureHeader = req.headers['x-digiflazz-signature'];
   if (!signatureHeader) {
-    // Jika tidak ada header, cek apakah callback_url sudah disetting ke server kita
-    // Beberapa versi Digiflazz tidak kirim signature, kita cukup terima saja
-    console.warn("⚠️ Webhook tanpa signature header, tetap diproses...");
+    // Digiflazz kadang tidak kirim header signature tergantung konfigurasi
+    console.warn('⚠️ Webhook tanpa header signature, diproses tanpa verifikasi...');
     return true;
   }
 
   const secret = getDigiflazzWebhookSecret();
   if (!secret) {
-    console.warn("⚠️ DIGIFLAZZ_WEBHOOK_SECRET tidak dikonfigurasi, skip verifikasi");
+    console.warn('⚠️ DIGIFLAZZ_WEBHOOK_SECRET tidak dikonfigurasi, skip verifikasi');
     return true;
   }
 
   const crypto = require('crypto');
+  // Digiflazz menggunakan JSON string sebagai payload untuk signature
   const rawBody = typeof body === 'string' ? body : JSON.stringify(body);
-  const expectedSig = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
 
-  if (signatureHeader !== expectedSig) {
-    console.error(`❌ Signature tidak cocok! Expected: ${expectedSig}, Got: ${signatureHeader}`);
-    return false;
-  }
-  return true;
+  // Coba SHA256 (HMAC)
+  const sig256 = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+  if (signatureHeader === sig256) return true;
+
+  // Coba SHA1 (Digiflazz legacy)
+  const sig1 = crypto.createHmac('sha1', secret).update(rawBody).digest('hex');
+  if (signatureHeader === sig1) return true;
+
+  // Coba MD5
+  const sigMd5 = crypto.createHmac('md5', secret).update(rawBody).digest('hex');
+  if (signatureHeader === sigMd5) return true;
+
+  console.error(`❌ Signature tidak cocok! Got: ${signatureHeader}`);
+  return false;
 }
 
 const listSchema = Joi.object({
@@ -270,8 +278,9 @@ const PPOBController = {
     }
 
     try {
-      // Verifikasi signature (sudah kita perbarui di fungsi di atas)
-      if (!verifyDigiflazzWebhook(req)) {
+      // Verifikasi signature Digiflazz
+      if (!verifyDigiflazzWebhook(req, payload)) {
+        console.error('❌ Webhook ditolak: signature tidak valid');
         return response.forbidden(res, 'Signature tidak valid');
       }
 

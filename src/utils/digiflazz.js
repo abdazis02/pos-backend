@@ -1,9 +1,11 @@
 const https = require('https');
 const crypto = require('crypto');
 
-const DIGIFLAZZ_URL = process.env.DIGIFLAZZ_URL || 'https://api.digiflazz.com';
-const DIGIFLAZZ_USERNAME = process.env.DIGIFLAZZ_USERNAME;
-const DIGIFLAZZ_API_KEY = process.env.DIGIFLAZZ_API_KEY;
+const _stripQuotes = (s) => s ? s.replace(/^["']|["']$/g, '').trim() : s;
+
+const DIGIFLAZZ_URL = _stripQuotes(process.env.DIGIFLAZZ_URL) || 'https://api.digiflazz.com';
+const DIGIFLAZZ_USERNAME = _stripQuotes(process.env.DIGIFLAZZ_USERNAME);
+const DIGIFLAZZ_API_KEY = _stripQuotes(process.env.DIGIFLAZZ_API_KEY);
 
 function buildSignature({ username, ref_id = '', tr_id = '' }) {
   const signKey = tr_id ? tr_id : ref_id;
