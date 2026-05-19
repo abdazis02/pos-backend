@@ -122,19 +122,21 @@ async function purchase({ buyer_sku_code, customer_no, ref_id }) {
     ref_id,
   };
 
-  // Jika pascabayar, gunakan endpoint 'pay-pasca'
-  const endpoint = isPostpaid ? 'pay-pasca' : 'transaction';
+  if (isPostpaid) {
+    payload.commands = 'pay-pasca';
+  }
 
-  console.log(`🚀 Digiflazz Req [${endpoint}]: ${buyer_sku_code} to ${customer_no}`);
+  console.log(`🚀 Digiflazz Req [transaction]: ${buyer_sku_code} to ${customer_no}`);
 
-  return sendDigiflazzRequest(endpoint, payload);
+  return sendDigiflazzRequest('transaction', payload);
 }
 
 /**
  * 🔥 Tambahan fungsi Cek Tagihan (Inquiry) khusus Pascabayar
  */
 async function checkInquiry({ buyer_sku_code, customer_no, ref_id }) {
-  return sendDigiflazzRequest('inq-pasca', {
+  return sendDigiflazzRequest('transaction', {
+    commands: 'inq-pasca',
     buyer_sku_code,
     customer_no,
     ref_id,
