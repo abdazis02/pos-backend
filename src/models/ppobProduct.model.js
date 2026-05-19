@@ -22,7 +22,7 @@ const PPOBProductModel = {
       });
     }
 
-    return query.orderBy('product_name');
+    return query.orderBy('price', 'asc').orderBy('product_name', 'asc');
   },
 
   async createOrUpdateProducts(products) {

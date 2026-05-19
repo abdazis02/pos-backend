@@ -106,14 +106,13 @@ async function purchase({ buyer_sku_code, customer_no, ref_id, tr_id }) {
     throw new Error('buyer_sku_code, dan customer_no wajib diisi');
   }
 
-  // 🔥 AMBIL DATA DARI DATABASE LOKAL (Bukan tarik ulang dari Digiflazz)
-  // Agar kita tahu 'type' produknya (prepaid/postpaid)
-  const PPOBProductModel = require('../models/ppobProduct.model');
-  const product = await PPOBProductModel.getAllProducts().where({ buyer_sku_code }).first();
+  // Ambil type produk dari DB lokal untuk tentukan prepaid/postpaid
+  const master = require('../config/knexMaster');
+  const productRow = await master('ppob_products').where({ buyer_sku_code }).first();
 
-  const isPostpaid = product?.type === 'postpaid' ||
-                     product?.category?.toLowerCase().includes('pascabayar') ||
-                     ['PLN PASCABAYAR', 'PDAM', 'BPJS', 'TELKOM', 'E-MONEY'].includes(product?.brand?.toUpperCase());
+  const isPostpaid = productRow?.type === 'postpaid' ||
+                     productRow?.category?.toLowerCase().includes('pascabayar') ||
+                     ['PLN PASCABAYAR', 'PDAM', 'BPJS', 'TELKOM'].includes(String(productRow?.brand || '').toUpperCase());
 
   let payload;
   if (isPostpaid) {
@@ -142,11 +141,13 @@ async function purchase({ buyer_sku_code, customer_no, ref_id, tr_id }) {
  * 🔥 Tambahan fungsi Cek Tagihan (Inquiry) khusus Pascabayar
  */
 async function checkInquiry({ buyer_sku_code, customer_no, ref_id }) {
+  // ref_id wajib ada agar buildSignature bisa membuat tanda tangan
+  const inquiryRefId = ref_id || `INQ-${Date.now()}`;
   return sendDigiflazzRequest('transaction', {
     commands: 'inq-pasca',
     buyer_sku_code,
     customer_no,
-    ref_id,
+    ref_id: inquiryRefId,
   });
 }
 
