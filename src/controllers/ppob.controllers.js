@@ -298,9 +298,8 @@ const PPOBController = {
         searchCategory = 'E-Money';
         searchType = 'prepaid'; // Tab E-money biasa hanya ambil prepaid
       } else if (category === 'E-Money Bebas Nominal') {
-        // 🔥 FIX KRITIKAL: E-Money Bebas Nominal di Digiflazz menggunakan kategori "E-MONEY" (HURUF BESAR SEMUA)
-        // Dan tipenya adalah 'postpaid'
-        searchCategory = 'E-MONEY';
+        // 🔥 Mapping Fleksibel: Cari 'E-Money' atau 'E-MONEY' untuk tipe pascabayar
+        searchCategory = 'E-Money';
         searchType = 'postpaid';
       }
 
@@ -315,13 +314,18 @@ const PPOBController = {
         try {
           const allProducts = await Digiflazz.productList();
           if (allProducts && allProducts.length > 0) {
+            // 🔥 AUDIT KATEGORI: Lihat semua kategori yang ada di Digiflazz
+            const categories = [...new Set(allProducts.map(p => `${p.category} (${p.type})`))];
+            console.log(`📦 DAFTAR KATEGORI DI DIGIFLAZZ:`, categories.join(', '));
+
             await PPOBProductModel.createOrUpdateProducts(allProducts);
-            // 🔥 FIX: Tambahkan searchType di pengambilan ulang agar filter tetap bekerja
+
+            // Ambil ulang dengan filter
             products = await PPOBProductModel.getAllProducts({
               category: searchCategory || undefined,
               type: searchType
             });
-            console.log(`✅ Sinkronisasi Berhasil. Ditemukan ${products.length} produk untuk filter ini.`);
+            console.log(`✅ Sinkronisasi Selesai. Filter [Cat: ${searchCategory}, Type: ${searchType}] menghasilkan ${products.length} produk.`);
           }
         } catch (syncErr) {
           console.error("❌ Gagal Sinkronisasi Digiflazz:", syncErr.message);
