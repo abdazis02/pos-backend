@@ -1,17 +1,19 @@
+const { toWIT, convertToWIT } = require('./timezone');
+
 const response = {
     // Success responses
     success: (res, data = null, message = 'Success', statusCode = 200) => {
         const responseObj = {
             success: true,
             message,
-            timestamp: new Date().toISOString()
+            timestamp: toWIT(new Date()) // 🕐 WIT (UTC+9)
         };
 
         if (data !== null) {
             if (typeof data === 'object' && !Array.isArray(data)) {
-                responseObj.data = data;
+                responseObj.data = convertToWIT(data); // 🕐 Konversi semua timestamp ke WIT
             } else {
-                responseObj.data = { items: data };
+                responseObj.data = { items: convertToWIT(data) }; // 🕐
             }
         }
 
@@ -29,7 +31,7 @@ const response = {
         return res.status(status).json({
             success: false,
             message,
-            timestamp: new Date().toISOString(),
+            timestamp: toWIT(new Date()), // 🕐 WIT (UTC+9)
             error: {
                 name: err?.name || 'Error',
                 message: err?.message || String(err),
@@ -43,7 +45,7 @@ const response = {
         const responseObj = {
             success: false,
             message,
-            timestamp: new Date().toISOString()
+            timestamp: toWIT(new Date()) // 🕐 WIT (UTC+9)
         };
 
         if (errors) {
@@ -57,7 +59,7 @@ const response = {
         return res.status(401).json({
             success: false,
             message,
-            timestamp: new Date().toISOString()
+            timestamp: toWIT(new Date()) // 🕐 WIT (UTC+9)
         });
     },
 
@@ -65,7 +67,7 @@ const response = {
         return res.status(403).json({
             success: false,
             message,
-            timestamp: new Date().toISOString()
+            timestamp: toWIT(new Date()) // 🕐 WIT (UTC+9)
         });
     },
 
@@ -73,7 +75,7 @@ const response = {
         return res.status(404).json({
             success: false,
             message,
-            timestamp: new Date().toISOString()
+            timestamp: toWIT(new Date()) // 🕐 WIT (UTC+9)
         });
     },
 
@@ -81,7 +83,7 @@ const response = {
         const responseObj = {
             success: false,
             message,
-            timestamp: new Date().toISOString()
+            timestamp: toWIT(new Date()) // 🕐 WIT (UTC+9)
         };
 
         if (details) {
@@ -96,7 +98,7 @@ const response = {
             success: false,
             message: 'Validation failed',
             errors: Array.isArray(errors) ? errors : [errors],
-            timestamp: new Date().toISOString()
+            timestamp: toWIT(new Date()) // 🕐 WIT (UTC+9)
         });
     },
 
@@ -106,7 +108,7 @@ const response = {
             success: true,
             message,
             data: {
-                items: data,
+                items: convertToWIT(data), // 🕐 Konversi ke WIT
                 pagination: {
                     total: pagination.total,
                     page: pagination.page,
@@ -116,22 +118,7 @@ const response = {
                     hasPrev: pagination.hasPrev
                 }
             },
-            timestamp: new Date().toISOString()
-        });
-    },
-
-    error: (res, err, message = 'Terjadi kesalahan', status = 500) => {
-        // Pastikan status selalu angka
-        if (typeof status !== 'number') status = 500;
-        return res.status(status).json({
-            success: false,
-            message,
-            timestamp: new Date().toISOString(),
-            error: {
-                name: err?.name || 'Error',
-                message: err?.message || String(err),
-                stack: process.env.NODE_ENV === 'development' ? err?.stack : undefined
-            }
+            timestamp: toWIT(new Date()) // 🕐 WIT (UTC+9)
         });
     },
 };

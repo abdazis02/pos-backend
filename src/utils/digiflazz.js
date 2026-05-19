@@ -156,12 +156,24 @@ async function checkInquiry({ buyer_sku_code, customer_no, ref_id }) {
 /**
  * 🔥 Cek Status Transaksi di Digiflazz menggunakan ref_id
  * Berguna sebagai fallback jika webhook gagal terkirim
+ *
+ * Digiflazz tidak punya endpoint check-status terpisah untuk prepaid.
+ * Cara yang benar: kirim ulang request dengan ref_id yang sama (idempotent).
+ * Jika transaksi sudah sukses, Digiflazz akan return rc=00 + status Sukses.
+ * Jika masih diproses, return rc=03.
  */
 async function checkTransactionStatus(ref_id) {
+  // Ambil detail produk dari ref_id untuk tahu buyer_sku_code & customer_no
+  // ref_id format: PPB-{tenant_id}-{store_id}-{timestamp}
+  // Kita tidak tahu buyer_sku_code & customer_no dari ref_id saja,
+  // jadi kita gunakan endpoint status Digiflazz yang memang ada.
+  //
+  // Digiflazz mendukung: POST /v1/transaction dengan commands=status-prepaid
+  // Signature: md5(username + api_key + ref_id)
   return sendDigiflazzRequest('transaction', {
-    commands: 'check-status',
+    commands: 'status-prepaid',  // ← Correct Digiflazz command untuk cek status
     ref_id,
-    // sign akan di-generate otomatis oleh sendDigiflazzRequest → buildSignature(ref_id)
+    // sign akan di-generate otomatis oleh sendDigiflazzRequest
   });
 }
 
