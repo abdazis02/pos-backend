@@ -26,7 +26,7 @@ function buildSign(ref_id) {
 
 function checkStatusFromDigiflazz(ref_id) {
   const payload = JSON.stringify({
-    commands: 'status-prepaid',  // ← Command yang benar untuk cek status prepaid Digiflazz
+    commands: 'check-status',
     username: DIGIFLAZZ_USERNAME,
     ref_id,
     sign: buildSign(ref_id),
