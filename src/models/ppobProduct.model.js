@@ -32,9 +32,14 @@ const PPOBProductModel = {
         const sku = product.buyer_sku_code || product.product_code || product.code || '';
         if (!sku) continue;
 
+        let category = product.category;
+        if (isPostpaid && ['DANA', 'GOPAY', 'OVO', 'SHOPEE PAY', 'LINKAJA'].includes(String(product.brand).toUpperCase())) {
+          category = 'E-Money';
+        }
+
         const data = {
           product_name: product.product_name,
-          category: product.category,
+          category: category,
           brand: product.brand,
           // Jika pasca, gunakan admin fee sebagai 'harga beli dasar'
           price: isPostpaid ? (parseFloat(product.admin) || 0) : (parseFloat(product.price) || 0),

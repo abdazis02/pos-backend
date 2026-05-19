@@ -1,26 +1,9 @@
-const fs = require('fs');
-const env = fs.readFileSync('.env', 'utf8').split('\n').forEach(line => {
-  let [k, v] = line.split('=');
-  if(k && v) {
-    v = v.trim().replace(/"/g, '');
-    process.env[k] = v;
-  }
-});
-const { productList } = require('./src/utils/digiflazz');
 const db = require('./src/config/knexMaster');
-const PPOBProductModel = require('./src/models/ppobProduct.model');
-
-(async () => {
-  try {
-    const allProducts = await productList();
-    console.log('Total fetched:', allProducts.length);
-    await PPOBProductModel.createOrUpdateProducts(allProducts);
-    
-    const postpaid = await db('ppob_products').where({ type: 'postpaid' }).count({ total: '*' }).first();
-    console.log('Postpaid in DB:', postpaid.total);
+db('ppob_products')
+  .whereIn('buyer_sku_code', ['dana1', 'gopay1', 'ovo1', 'shopee1'])
+  .update({ category: 'E-Money' })
+  .then(res => {
+    console.log('Updated rows:', res);
     process.exit(0);
-  } catch (err) {
-    console.error(err);
-    process.exit(1);
-  }
-})();
+  })
+  .catch(console.error);
