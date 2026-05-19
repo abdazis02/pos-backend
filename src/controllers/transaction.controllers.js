@@ -34,8 +34,8 @@ function mapTransactionToFrontend(tx, owner_id, items = []) {
     tax: tx.tax,
     tax_percentage: tx.tax_percentage,
     notes: tx.notes,
-    // 🔥 FIX HARDLOCK WIT (+09:00)
-    // Kirim string murni WIT agar tidak ada pergeseran lagi di HP
+    // 🔥 STANDARISASI WIT (+09:00):
+    // Menggunakan .utcOffset(9) dari moment agar jam konsisten di Ternate.
     created_at: moment.utc(tx.created_at).utcOffset(9).format('YYYY-MM-DD HH:mm:ss'),
     items: items.map(item => ({
       productId: item.product_id,

@@ -14,9 +14,17 @@ function getTenantConnection(tenantConfig) {
         user: tenantConfig.db_user,
         password: tenantConfig.db_pass,
         database: tenantConfig.db_name,
-        timezone: '+00:00', // 🔥 Pakai UTC (Standard POS)
+        timezone: '+09:00', // 🔥 HARDLOCK WIT (+09:00)
       },
-      pool: { min: 0, max: 10 },
+      pool: {
+        min: 0,
+        max: 10,
+        afterCreate: (conn, done) => {
+          conn.query("SET time_zone='+09:00';", (err) => {
+            done(err, conn);
+          });
+        }
+      },
     });
   }
 

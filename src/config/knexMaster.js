@@ -8,12 +8,17 @@ const master = knex({
     user: process.env.DB_USER,
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
-    timezone: '+00:00', // 🔥 Pakai UTC (Standard POS)
+    timezone: '+09:00', // 🔥 HARDLOCK WIT (+09:00)
   },
   pool: {
     min: 2,
     max: 20,
-    idleTimeoutMillis: 30000,
+    afterCreate: (conn, done) => {
+      // Set session timezone to WIT for all connections
+      conn.query("SET time_zone='+09:00';", (err) => {
+        done(err, conn);
+      });
+    }
   },
 });
 
