@@ -114,7 +114,12 @@ const PPOBController = {
         return response.badRequest(res, 'Harga produk PPOB tidak valid');
       }
 
-      if (value.sale_price < price) {
+      const isPostpaid = !!value.tr_id;
+      // Untuk pascabayar, harga modal (price) di database adalah 0 (hanya admin).
+      // Sehingga kita harus menggunakan sale_price sebagai acuan pemotongan saldo.
+      const basePrice = isPostpaid ? value.sale_price : price;
+
+      if (value.sale_price < basePrice && !isPostpaid) {
         await trxMaster.rollback();
         await trxTenant.rollback();
         return response.badRequest(res, 'Harga jual lebih kecil dari harga produk PPOB');
@@ -129,8 +134,10 @@ const PPOBController = {
         fee = parseInt(process.env.TRANSACTION_FEE, 10) || 0;
       }
 
-      const totalCostForMitra = price + fee;
-      const margin = value.sale_price - totalCostForMitra; // Laba Bersih Mitra
+      // Untuk pascabayar, cost untuk mitra adalah harga jual penuh (tagihan asli) + fee platform
+      // Margin tenant (profit) diatur ke 0 sementara karena harga jual dari backend sudah merupakan modal akhir dari Digiflazz.
+      const totalCostForMitra = basePrice + fee;
+      const margin = isPostpaid ? 0 : (value.sale_price - totalCostForMitra); // Laba Bersih Mitra
       const totalDeduct = totalCostForMitra;
 
       if (beforeBalance < totalDeduct) {
@@ -153,8 +160,10 @@ const PPOBController = {
         return response.badRequest(res, result?.message || 'Gagal membuat order PPOB Digiflazz');
       }
 
-      const afterPurchase = beforeBalance - price;
-      const afterFee = afterPurchase - fee;
+      // Pemotongan fee aplikasi ke mitra berlaku untuk SEMUA jenis transaksi (Prepaid & Postpaid)
+      const platformFee = fee;
+      const afterPurchase = beforeBalance - basePrice;
+      const afterFee = afterPurchase - platformFee;
 
       const orderData = {
         store_id,
@@ -164,12 +173,10 @@ const PPOBController = {
         customer_no: value.customer_no,
         ref_id,
         product_name: result?.data?.product_name || null,
-        price,
+        price: basePrice, // 🔥 Gunakan basePrice
         sale_price: value.sale_price,
         status: result?.status == 'Pending' ? 'pending' : 'success',
         response: JSON.stringify(result),
-        // 🔥 Simpan dalam WIT murni (karena server cloud biasanya UTC, kita paksa geser saat simpan atau baca)
-        // Agar konsisten, kita biarkan SQL yang melakukan konversi saat laporan.
         created_at: req.db.fn.now(),
         updated_at: req.db.fn.now(),
       };
@@ -181,7 +188,7 @@ const PPOBController = {
       await WalletTransaction.createTransaction(trxMaster, {
         owner_id: owner.id,
         type: 'ppob_purchase',
-        amount: -price,
+        amount: -basePrice,
         balance_after: afterPurchase,
         reference_type: 'ppob_orders',
         reference_id: orderRef,
@@ -189,11 +196,11 @@ const PPOBController = {
       });
 
       // 2. Catat fee platform per transaksi PPOB
-      if (fee > 0) {
+      if (platformFee > 0) {
         await WalletTransaction.createTransaction(trxMaster, {
           owner_id: owner.id,
           type: 'transaction_fee',
-          amount: -fee,
+          amount: -platformFee,
           balance_after: afterFee,
           reference_type: 'ppob_orders',
           reference_id: orderRef,
