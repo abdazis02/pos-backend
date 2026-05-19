@@ -1,12 +1,15 @@
 /**
  * 🔄 PPOB Auto-Sync Job
- * Sinkronisasi produk Digiflazz secara terjadwal menggunakan node-cron.
- * Jadwal: setiap jam 03:00 dan 15:00 WIT (UTC+9) setiap hari.
+ * Sinkronisasi produk Digiflazz secara terjadwal.
+ * Menggunakan node-cron jika tersedia, fallback ke setInterval.
  */
 
-const cron = require('node-cron');
 const Digiflazz = require('../utils/digiflazz');
 const PPOBProductModel = require('../models/ppobProduct.model');
+
+// Interval fallback: setiap 6 jam
+const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const INITIAL_DELAY_MS = 15 * 1000;
 
 async function runSync() {
   const now = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jayapura' });
@@ -16,7 +19,7 @@ async function runSync() {
     const allProducts = await Digiflazz.productList();
 
     if (!allProducts || allProducts.length === 0) {
-      console.warn('⚠️ [PPOB Auto-Sync] Tidak ada produk yang diterima dari Digiflazz. Sync dilewati.');
+      console.warn('⚠️ [PPOB Auto-Sync] Tidak ada produk dari Digiflazz. Sync dilewati.');
       return;
     }
 
@@ -28,25 +31,31 @@ async function runSync() {
 }
 
 function startPpobSyncJob() {
-  // Sync pertama saat server startup (delay 15 detik agar koneksi DB siap)
+  // Sync pertama saat startup
   setTimeout(() => {
     console.log('🔄 [PPOB Auto-Sync] Menjalankan sync awal saat startup...');
     runSync();
-  }, 15 * 1000);
+  }, INITIAL_DELAY_MS);
 
-  // Jadwal: setiap hari jam 03:00 dan 15:00 WIT (UTC+9 → UTC: 18:00 dan 06:00)
-  // Format cron: detik(opsional) menit jam hari bulan hari-minggu
-  cron.schedule('0 18 * * *', () => {
-    console.log('⏰ [PPOB Auto-Sync] Cron job jam 03:00 WIT...');
-    runSync();
-  }, { timezone: 'Asia/Jayapura' });
-
-  cron.schedule('0 6 * * *', () => {
-    console.log('⏰ [PPOB Auto-Sync] Cron job jam 15:00 WIT...');
-    runSync();
-  }, { timezone: 'Asia/Jayapura' });
-
-  console.log('📅 [PPOB Auto-Sync] Job terdaftar: startup (15 detik), jam 03:00 & 15:00 WIT setiap hari.');
+  // Coba gunakan node-cron jika tersedia
+  try {
+    const cron = require('node-cron');
+    // Jam 03:00 WIT setiap hari
+    cron.schedule('0 3 * * *', () => {
+      console.log('⏰ [PPOB Auto-Sync] Cron 03:00 WIT');
+      runSync();
+    }, { timezone: 'Asia/Jayapura' });
+    // Jam 15:00 WIT setiap hari
+    cron.schedule('0 15 * * *', () => {
+      console.log('⏰ [PPOB Auto-Sync] Cron 15:00 WIT');
+      runSync();
+    }, { timezone: 'Asia/Jayapura' });
+    console.log('📅 [PPOB Auto-Sync] node-cron aktif: jam 03:00 & 15:00 WIT setiap hari.');
+  } catch (e) {
+    // Fallback: setInterval setiap 6 jam
+    setInterval(runSync, SYNC_INTERVAL_MS);
+    console.log('📅 [PPOB Auto-Sync] Fallback setInterval aktif: setiap 6 jam.');
+  }
 }
 
 module.exports = { startPpobSyncJob, runSync };
