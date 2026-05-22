@@ -107,28 +107,67 @@ exports.updateClient = async (req, res) => {
 
 exports.getDashboardStats = async (req, res) => {
   try {
-    const ownerStats = await master('owners')
-      .where('status', 'active')
-      .sum('wallet_balance as total_saldo')
-      .count('id as total_mitra')
-      .first();
+    // 1. Dapatkan Statistik Mitra
+    const owners = await master("owners").select('*');
+    let aktif = 0, suspend = 0, blokir = 0;
+    let saldoMitra = 0;
 
-    const revenueStats = await master('wallet_transactions')
-      .whereIn('type', ['transaction_fee', 'ppob_margin', 'ppob_fee'])
-      .sum('amount as total_potongan')
-      .count('id as total_trx')
-      .first();
+    owners.forEach(c => {
+      saldoMitra += parseFloat(c.wallet_balance || 0);
+      const statusLower = String(c.status).toLowerCase();
+      if (statusLower === 'active' || statusLower === 'aktif') aktif++;
+      else if (statusLower === 'suspended' || statusLower === 'suspend') suspend++;
+      else blokir++;
+    });
 
-    const totalPendapatan = (revenueStats.total_potongan || 0) * -1;
-    const transaksiSukses = revenueStats.total_trx || 0;
+    // 2. Tarik Saldo Asli Perusahaan dari Digiflazz
+    let saldoDigiflazz = 0;
+    try {
+      const axios = require('axios');
+      const crypto = require('crypto');
+      const username = process.env.DIGIFLAZZ_USERNAME;
+      const key = process.env.DIGIFLAZZ_API_KEY || process.env.DIGIFLAZZ_DEV_KEY || process.env.DIGIFLAZZ_PRODUCTION_KEY;
+      
+      if (username && key) {
+         const sign = crypto.createHash('md5').update(username + key + "depo").digest('hex');
+         const digiRes = await axios.post('https://api.digiflazz.com/v1/cek-saldo', { cmd: 'deposit', username, sign });
+         if (digiRes.data && digiRes.data.data) {
+            saldoDigiflazz = digiRes.data.data.deposit || 0;
+         }
+      }
+    } catch(e) {
+      console.error("Gagal menarik saldo Digiflazz:", e.message);
+    }
 
+    // 3. Hitung Total Transaksi
+    let totalTransaksiAllTime = 0;
+    let totalTransaksiHariIni = 0;
+    try {
+       const today = new Date();
+       today.setHours(0,0,0,0);
+       
+       const txCountAll = await master("wallet_transactions").count('* as total').first();
+       totalTransaksiAllTime = txCountAll.total || 0;
+       
+       const txCountToday = await master("wallet_transactions")
+          .where('created_at', '>=', today)
+          .count('* as total').first();
+       totalTransaksiHariIni = txCountToday.total || 0;
+    } catch(e) {
+       console.error("Gagal menghitung transaksi:", e.message);
+    }
+
+    // 4. Kirimkan Data ke Frontend
     res.status(200).json({
       success: true,
       data: {
-        saldoPusat: ownerStats.total_saldo || 0,
-        totalPendapatan: totalPendapatan,
-        transaksiSukses: transaksiSukses,
-        mitraAktif: ownerStats.total_mitra || 0
+        saldoDigiflazz, 
+        saldoMitra, 
+        totalTransaksiAllTime, 
+        totalTransaksiHariIni, 
+        mitraAktif: aktif, 
+        mitraSuspend: suspend, 
+        mitraBlokir: blokir 
       }
     });
   } catch (error) {
@@ -175,11 +214,46 @@ exports.getDashboardChart = async (req, res) => {
 
 exports.getTransactions = async (req, res) => {
   try {
-    const limit = req.query.limit ? parseInt(req.query.limit) : 100;
+    const limit  = Math.min(parseInt(req.query.limit) || 50, 500);
+    const page   = Math.max(parseInt(req.query.page)  || 1,  1);
+    const offset = (page - 1) * limit;
 
-    // 1. Ambil log dasar dari master database
-    const logs = await master('wallet_transactions as wt')
-      .join('owners as o', 'o.id', 'wt.owner_id')
+    const typeFilter   = req.query.type;
+    const searchFilter = req.query.search;
+
+    let baseQuery = master('wallet_transactions as wt').join('owners as o', 'o.id', 'wt.owner_id');
+
+    if (typeFilter === 'POS') {
+      baseQuery = baseQuery.where('wt.reference_type', 'transactions');
+    } else if (typeFilter === 'PPOB') {
+      baseQuery = baseQuery.where('wt.reference_type', 'ppob_orders');
+    }
+
+    if (searchFilter) {
+      baseQuery = baseQuery.where(function() {
+        this.where('wt.reference_id', 'like', `%${searchFilter}%`)
+            .orWhere('o.business_name', 'like', `%${searchFilter}%`)
+            .orWhere('wt.description', 'like', `%${searchFilter}%`);
+      });
+    }
+
+    const countRow = await baseQuery.clone().count('wt.id as total').first();
+    const total = parseInt(countRow.total) || 0;
+
+    const allTotalRow = await master('wallet_transactions').count('id as total').first();
+    const allPosRow   = await master('wallet_transactions').where('reference_type', 'transactions').count('id as total').first();
+    const allPpobRow  = await master('wallet_transactions').where('reference_type', 'ppob_orders').count('id as total').first();
+    const allLabaRow  = await master('wallet_transactions').whereIn('type', ['transaction_fee', 'ppob_margin', 'ppob_fee']).select(master.raw('COALESCE(SUM(ABS(amount)), 0) as total')).first();
+
+    const stats = {
+      total: parseInt(allTotalRow.total) || 0,
+      pos: parseInt(allPosRow.total) || 0,
+      ppob: parseInt(allPpobRow.total) || 0,
+      pending: 0,
+      laba: parseFloat(allLabaRow.total) || 0,
+    };
+
+    const logs = await baseQuery.clone()
       .select(
         'wt.id',
         master.raw("DATE_FORMAT(wt.created_at, '%Y-%m-%d %H:%i') as tanggal"),
@@ -190,75 +264,70 @@ exports.getTransactions = async (req, res) => {
         'wt.balance_after',
         'wt.reference_type',
         'wt.reference_id',
-        'o.id as owner_id'
+        'o.id as owner_id' // HANYA AMBIL owner_id, sisanya dicari di tabel tenants
       )
       .orderBy('wt.created_at', 'desc')
-      .limit(limit);
+      .limit(limit)
+      .offset(offset);
 
-    const enrichedLogs = [];
     const { getTenantConnection } = require('../config/knexTenant');
+    const formattedData = [];
 
-    // 2. Hubungkan secara dinamis ke database tenant untuk mengambil detail finansial asli
-    for (const log of logs) {
-      let total_cost = 0;
-      let transaction_fee = 0;
-      let payment_method = 'Saldo Dompet';
-      let status = 'Sukses';
+    for (let l of logs) {
+      let clientDb = null;
+      let detail = null;
 
       try {
-        const tenant = await master('tenants').where('owner_id', log.owner_id).first();
+        // Ambil konfigurasi database secara aman dari tabel tenants
+        const tenantInfo = await master('tenants').where('owner_id', l.owner_id).first();
         
-        if (tenant) {
-          const tenantDb = getTenantConnection(tenant);
+        if (tenantInfo && tenantInfo.db_name) {
+          clientDb = getTenantConnection({
+            db_name: tenantInfo.db_name,
+            db_user: tenantInfo.db_user,
+            db_pass: tenantInfo.db_pass
+          });
 
-          // JIKA TRANSAKSI KASIR (POS)
-          if (log.reference_type === 'transactions') {
-            const tx = await tenantDb('transactions').where('id', log.reference_id).first();
-            if (tx) {
-              total_cost = tx.total_cost || 0;
-              payment_method = tx.payment_method || 'CASH';
-              status = tx.payment_status === 'paid' ? 'Sukses' : (tx.payment_status === 'pending' ? 'Pending' : 'Gagal');
-            }
-            // Margin POS diambil dari transaction_fee yang dipotong per transaksi
-            transaction_fee = Math.abs(log.amount);
-
-          // JIKA TRANSAKSI LAYANAN PPOB
-          } else if (log.reference_type === 'ppob_orders') {
-            const order = await tenantDb('ppob_orders').where('id', log.reference_id).first();
-            if (order) {
-              total_cost = order.sale_price || 0;
-              status = order.status === 'success' ? 'Sukses' : (order.status === 'pending' ? 'Pending' : 'Gagal');
-              payment_method = 'Saldo Dompet';
-            }
-            // Margin PPOB diambil dari fee/margin transaksi tersebut
-            transaction_fee = Math.abs(log.amount);
+          if (l.reference_type === 'transactions' && l.reference_id) {
+            detail = await clientDb('transactions').where('id', l.reference_id).first();
+          } else if (l.reference_type === 'ppob_orders' && l.reference_id) {
+            detail = await clientDb('ppob_orders').where('id', l.reference_id).first();
           }
         }
-      } catch (err) {
-        console.error(`Gagal menarik detail database tenant untuk log ID ${log.id}:`, err);
+      } catch(e) { }
+
+      let tipe = l.reference_type === 'transactions' ? 'POS' : (l.reference_type === 'ppob_orders' ? 'PPOB' : l.tipe);
+      
+      let status = 'Sukses';
+      if (detail) {
+         if (detail.status === 'pending' || detail.payment_status === 'pending') status = 'Pending';
+         else if (detail.status === 'failed' || detail.payment_status === 'failed') status = 'Gagal';
       }
 
-      // Pastikan format properti sinkron 100% dengan kebutuhan komponen React Anda
-      enrichedLogs.push({
-        id: log.id,
-        tanggal: log.tanggal,
-        nama_toko: log.nama_toko,
-        tipe: log.reference_type === 'transactions' ? 'POS' : (log.reference_type === 'ppob_orders' ? 'PPOB' : log.tipe),
-        produk: log.produk,
-        grand_total: total_cost || Math.abs(log.amount), // Total cost transaksi dari mitra
-        laba: transaction_fee || Math.abs(log.amount),  // Transaction fee / margin yang dipotong
-        metode_pembayaran: payment_method,
-        status: status,
-        ref_id: log.reference_id || '-'
+      formattedData.push({
+        id: l.id,
+        tanggal: l.tanggal,
+        nama_toko: l.nama_toko,
+        tipe: tipe,
+        produk: detail ? (detail.product_name || detail.description || l.produk) : l.produk,
+        no_tujuan: detail ? (detail.target_number || '-') : '-',
+        ref_id: l.reference_id || '-',
+        harga_modal: detail ? parseFloat(detail.capital_price || detail.amount || 0) : 0,
+        tax: detail ? parseFloat(detail.tax || 0) : 0,
+        grand_total: detail ? parseFloat(detail.total_cost || detail.amount || 0) : 0,
+        laba: Math.abs(parseFloat(l.amount)) || 0,
+        metode_pembayaran: detail ? (detail.payment_method || '-') : '-',
+        status: status
       });
     }
 
-    res.status(200).json({ success: true, data: enrichedLogs });
-  } catch (error) {
-    console.error("Error getTransactions:", error);
-    res.status(500).json({ success: false, message: "Terjadi kesalahan server" });
+    res.json({ success: true, total, stats, data: formattedData });
+  } catch (e) {
+    console.error('getTransactions error:', e.message);
+    res.status(500).json({ success: false, message: e.message });
   }
 };
+
 
 // ============================================
 // 4. SETTING LAYANAN GLOBAL
@@ -484,5 +553,197 @@ exports.updatePassword = async (req, res) => {
   } catch (error) {
     console.error("Error updatePassword:", error);
     res.status(500).json({ success: false, message: "Gagal memperbarui password admin" });
+  }
+};
+
+// LEADERBOARD (Top Mitra & Top PPOB)
+exports.getLeaderboard = async (req, res) => {
+  try {
+    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const startDate = `${month}-01 00:00:00`;
+    const endDate   = `${month}-31 23:59:59`;
+
+    // 1. Top 5 Mitra Paling Aktif Bulan Ini
+    // KITA KEMBALIKAN 'transaction_fee' agar transaksi POS kasir (seperti Abijaya) terhitung!
+    // Hanya buang ppob_margin dan ppob_fee agar tidak dihitung dua kali
+    const topMitra = await master('wallet_transactions as wt')
+      .join('owners as o', 'o.id', 'wt.owner_id')
+      .whereBetween('wt.created_at', [startDate, endDate])
+      .whereNotIn('wt.type', ['ppob_margin', 'ppob_fee']) 
+      .select('o.id', 'o.business_name')
+      .count('wt.id as total_trx')
+      .groupBy('o.id', 'o.business_name')
+      .orderByRaw('COUNT(wt.id) DESC')
+      .limit(5);
+
+    // 2. Top 5 Produk PPOB Terlaris Bulan Ini
+    const ppobTransactions = await master('wallet_transactions as wt')
+      .where('wt.reference_type', 'ppob_orders')
+      .whereNotIn('wt.type', ['transaction_fee', 'ppob_margin', 'ppob_fee'])
+      .whereBetween('wt.created_at', [startDate, endDate])
+      .select('wt.description');
+
+    const productCounts = {};
+    for (let trx of ppobTransactions) {
+       const match = trx.description.match(/PPOB\s+([^\s]+)\s+untuk/i);
+       let sku = match ? match[1] : trx.description; 
+       
+       if (!productCounts[sku]) {
+          productCounts[sku] = 0;
+       }
+       productCounts[sku]++;
+    }
+
+    const sortedSkus = Object.keys(productCounts)
+       .map(sku => ({ sku, total_sold: productCounts[sku] }))
+       .sort((a, b) => b.total_sold - a.total_sold)
+       .slice(0, 5);
+
+    const topProducts = [];
+    for (let item of sortedSkus) {
+      const productDetail = await master('ppob_products')
+        .whereRaw('LOWER(buyer_sku_code) = ?', [item.sku.toLowerCase()])
+        .first();
+
+      topProducts.push({
+        product_name: productDetail ? productDetail.product_name : item.sku,
+        total_sold: item.total_sold,
+        buyer_sku_code: item.sku,
+        category: productDetail ? productDetail.category : 'PPOB'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: { topMitra, topProducts }
+    });
+
+  } catch (e) {
+    console.error('getLeaderboard error:', e.message);
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+
+// REKONSILIASI
+exports.getReconciliation = async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 7;
+    const rows = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      d.setHours(0, 0, 0, 0);
+      const dEnd = new Date(d);
+      dEnd.setHours(23, 59, 59, 999);
+      const dateStr = d.toISOString().slice(0, 10);
+
+      const topupRow = await master('wallet_topups')
+        .where('status', 'success')
+        .whereBetween('paid_at', [d, dEnd])
+        .select(master.raw('COALESCE(SUM(amount), 0) as total, COUNT(*) as cnt'))
+        .first();
+
+      const purchaseRow = await master('wallet_transactions')
+        .whereIn('type', ['ppob_purchase'])
+        .whereBetween('created_at', [d, dEnd])
+        .select(master.raw('COALESCE(SUM(ABS(amount)), 0) as total, COUNT(*) as cnt'))
+        .first();
+
+      rows.push({
+        date: dateStr,
+        totalTopup: parseFloat(topupRow.total || 0),
+        topupCount: parseInt(topupRow.cnt || 0),
+        totalPurchase: parseFloat(purchaseRow.total || 0),
+        purchaseCount: parseInt(purchaseRow.cnt || 0)
+      });
+    }
+    res.json({ success: true, data: rows });
+  } catch (e) {
+    console.error('Reconciliation error:', e.message);
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// AUDIT LOG
+exports.getAuditLogs = async (req, res) => {
+  try {
+    const { page = 1, limit = 20, module } = req.query;
+    const offset = (page - 1) * limit;
+    let q = master('admin_logs').orderBy('created_at', 'desc').limit(limit).offset(offset);
+    if (module) q = q.where('module', module);
+    const logs = await q;
+    res.json({ success: true, data: logs });
+  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+};
+
+// LAPORAN BULANAN
+// LAPORAN BULANAN
+exports.getMonthlyReport = async (req, res) => {
+  try {
+    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const startDate = `${month}-01 00:00:00`;
+    const endDate   = `${month}-31 23:59:59`;
+
+    // 1. Dapatkan daftar mitra yang AKTIF melakukan transaksi di bulan tersebut
+    const activeClients = await master('owners as o')
+      .join('wallet_transactions as wt', 'wt.owner_id', 'o.id')
+      .whereBetween('wt.created_at', [startDate, endDate])
+      .select('o.id', 'o.business_name as nama_toko', 'o.email', 'o.phone as no_hp', 'o.status', 'o.created_at as tanggal_gabung')
+      .groupBy('o.id', 'o.business_name', 'o.email', 'o.phone', 'o.status', 'o.created_at')
+      .orderByRaw('COUNT(wt.id) DESC');
+
+    // 2. Total transaksi bulan ini
+    const countRow = await master('wallet_transactions')
+      .whereBetween('created_at', [startDate, endDate])
+      .count('id as total').first();
+    const totalTransactions = parseInt(countRow.total) || 0;
+
+    // 3. Estimasi laba bulan ini
+    const year  = parseInt(month.slice(0, 4));
+    const mon   = parseInt(month.slice(5, 7));
+    const profitRow = await master('wallet_transactions')
+      .whereRaw('YEAR(created_at) = ? AND MONTH(created_at) = ?', [year, mon])
+      .select(master.raw('COALESCE(SUM(ABS(amount)), 0) as total')).first();
+    const totalProfit = parseFloat(profitRow.total) || 0;
+
+    // 4. Sample 200 transaksi untuk PDF/CSV
+    const logs = await master('wallet_transactions as wt')
+      .join('owners as o', 'o.id', 'wt.owner_id')
+      .whereBetween('wt.created_at', [startDate, endDate])
+      .select(
+        'wt.id',
+        master.raw("DATE_FORMAT(wt.created_at, '%Y-%m-%d %H:%i') as tanggal"),
+        'o.business_name as nama_toko',
+        'wt.type as tipe',
+        'wt.description as produk',
+        master.raw('ABS(wt.amount) as laba'),
+        'wt.reference_type',
+        'wt.reference_id'
+      )
+      .orderBy('wt.created_at', 'desc');
+
+    const transactions = logs.map(l => ({
+      id:          l.id,
+      tanggal:     l.tanggal,
+      nama_toko:   l.nama_toko,
+      tipe:        l.reference_type === 'transactions' ? 'POS'
+                 : l.reference_type === 'ppob_orders'  ? 'PPOB'
+                 : (l.tipe || '-'),
+      produk:      l.produk || '-',
+      grand_total: parseFloat(l.laba) || 0,
+      laba:        parseFloat(l.laba) || 0,
+      status:      'Sukses',
+      ref_id:      l.reference_id || '-'
+    }));
+
+    res.json({
+      success: true,
+      data: { newClients: activeClients, totalTransactions, totalProfit, transactions }
+    });
+
+  } catch (e) {
+    console.error('Monthly report error:', e.message);
+    res.status(500).json({ success: false, message: e.message });
   }
 };

@@ -117,7 +117,7 @@ const TransactionController = {
         return response.badRequest(res, error.message, error.details);
       }
 
-      const { payment_method, received_amount, notes, items } = value;
+      const { payment_method, received_amount, notes, items, created_at } = value;
 
       // Verifikasi item transaksi
       let grossSubtotal = 0;    // total harga sebelum diskon
@@ -243,9 +243,12 @@ const TransactionController = {
         subtotal: netSubtotal,
         discount_total: discountTotal,
         tax,
-        tax_percentage: taxPercentage,
-        notes
       };
+
+      // 🔥 TAMBAHKAN KODE INI AGAR WAKTU OFFLINE TERSIMPAN:
+      if (created_at) {
+        transaction.created_at = created_at;
+      }
 
       // Simpan transaksi dan item dalam transaksi
       const transaction_id = await TransactionModel.create(trxTenant, transaction);

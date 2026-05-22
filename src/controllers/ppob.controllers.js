@@ -23,7 +23,8 @@ const purchaseSchema = Joi.object({
   buyer_sku_code: Joi.string().required(),
   customer_no: Joi.string().required(),
   sale_price: Joi.number().required(),
-  tr_id: Joi.string().optional(), // 🔥 Tambahan parameter untuk ID Inquiry Pascabayar
+  tr_id: Joi.string().optional(),
+  mitra_markup: Joi.number().optional().default(0), // 🔥 Tambahan: Menangkap Keuntungan Kasir dari Frontend
 });
 
 function parseDigiflazzPrice(product) {
@@ -32,14 +33,12 @@ function parseDigiflazzPrice(product) {
 
 function getDigiflazzWebhookSecret() {
   const raw = process.env.DIGIFLAZZ_WEBHOOK_SECRET || process.env.DIGIFLAZZ_API_KEY || '';
-  // Hapus tanda kutip jika ada (misal .env: DIGIFLAZZ_WEBHOOK_SECRET="sangat rahasia")
   return raw.replace(/^["']|["']$/g, '').trim();
 }
 
 function verifyDigiflazzWebhook(req, body) {
   const signatureHeader = req.headers['x-digiflazz-signature'];
   if (!signatureHeader) {
-    // Digiflazz kadang tidak kirim header signature tergantung konfigurasi
     console.warn('⚠️ Webhook tanpa header signature, diproses tanpa verifikasi...');
     return true;
   }
@@ -51,18 +50,14 @@ function verifyDigiflazzWebhook(req, body) {
   }
 
   const crypto = require('crypto');
-  // Digiflazz menggunakan JSON string sebagai payload untuk signature
   const rawBody = typeof body === 'string' ? body : JSON.stringify(body);
 
-  // Coba SHA256 (HMAC)
   const sig256 = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
   if (signatureHeader === sig256) return true;
 
-  // Coba SHA1 (Digiflazz legacy)
   const sig1 = crypto.createHmac('sha1', secret).update(rawBody).digest('hex');
   if (signatureHeader === sig1) return true;
 
-  // Coba MD5
   const sigMd5 = crypto.createHmac('md5', secret).update(rawBody).digest('hex');
   if (signatureHeader === sigMd5) return true;
 
@@ -77,9 +72,6 @@ const listSchema = Joi.object({
 });
 
 const PPOBController = {
-  /**
-   * 🔥 Fitur Cek Tagihan Pascabayar (Inquiry)
-   */
   async inquiry(req, res) {
     try {
       const { buyer_sku_code, customer_no } = req.body;
@@ -116,8 +108,6 @@ const PPOBController = {
       const { store_id } = req.params;
       const tenant_id = req.user.tenant_id;
 
-      // 🔥 1. IDEMPOTENCY CHECK: Cegah double transaksi dalam rentang waktu singkat
-      // Kita cek apakah ada transaksi dengan customer_no dan buyer_sku_code yang sama dalam 2 menit terakhir
       const duplicateCheck = await trxTenant('ppob_orders')
         .where({ store_id, customer_no: value.customer_no, buyer_sku_code: value.buyer_sku_code })
         .whereRaw('created_at > NOW() - INTERVAL 2 MINUTE')
@@ -144,43 +134,43 @@ const PPOBController = {
         return response.badRequest(res, 'Produk PPOB tidak ditemukan pada Digiflazz');
       }
 
+      const dbProduct = await master('ppob_products').where('buyer_sku_code', value.buyer_sku_code).first();
+      if (!dbProduct) {
+        await trxMaster.rollback();
+        await trxTenant.rollback();
+        return response.badRequest(res, 'Produk tidak tersinkronisasi di database');
+      }
+
       const price = parseDigiflazzPrice(product);
-      if (price < 0) { // Biarkan 0 jika produk bebas nominal
+      if (price < 0) { 
         await trxMaster.rollback();
         await trxTenant.rollback();
         return response.badRequest(res, 'Harga produk PPOB tidak valid');
       }
 
       const isPostpaid = !!value.tr_id;
-      // Untuk pascabayar, harga modal (price) di database adalah 0 (hanya admin).
-      // Sehingga kita harus menggunakan sale_price sebagai acuan pemotongan saldo.
-      const basePrice = isPostpaid ? value.sale_price : price;
+      // 🔥 LOGIKA BARU PEMOTONGAN SALDO (TANPA FEE 150)
+      let piposMargin = parseFloat(dbProduct.margin || 0); // 👈 DIJADIKAN ANGKA
+      let beforeBalanceNum = parseFloat(beforeBalance || 0); // 👈 DIJADIKAN ANGKA
+      let totalCostForMitra = 0;
+      let purchaseModal = 0; // Modal dasar (ke Digiflazz)
 
-      if (value.sale_price < basePrice && !isPostpaid) {
-        await trxMaster.rollback();
-        await trxTenant.rollback();
-        return response.badRequest(res, 'Harga jual lebih kecil dari harga produk PPOB');
+      if (isPostpaid) {
+        // Tagihan Pascabayar: Potongan Saldo Mitra = Harga Jual di Struk - Laba Kasir (Mitra)
+        totalCostForMitra = parseFloat(value.sale_price) - parseFloat(value.mitra_markup || 0);
+        purchaseModal = totalCostForMitra - piposMargin; // Modal tagihan asli dari Biller
+      } else {
+        // Pulsa/Data: Potongan Saldo Mitra = Modal Digiflazz + Keuntungan PIPos
+        totalCostForMitra = price + piposMargin;
+        purchaseModal = price;
       }
 
-      // 🔥 AMBIL FEE DINAMIS DARI DATABASE (FALLBACK KE .ENV JIKA TIDAK ADA)
-      let fee = 0;
-      try {
-        const setting = await master('configs').where({ key: 'ppob_fee' }).first();
-        fee = setting ? parseInt(setting.value, 10) : (parseInt(process.env.TRANSACTION_FEE, 10) || 0);
-      } catch (e) {
-        fee = parseInt(process.env.TRANSACTION_FEE, 10) || 0;
-      }
-
-      // Untuk pascabayar, cost untuk mitra adalah harga jual penuh (tagihan asli) + fee platform
-      // Margin tenant (profit) diatur ke 0 sementara karena harga jual dari backend sudah merupakan modal akhir dari Digiflazz.
-      const totalCostForMitra = basePrice + fee;
-      const margin = isPostpaid ? 0 : (value.sale_price - totalCostForMitra); // Laba Bersih Mitra
       const totalDeduct = totalCostForMitra;
 
-      if (beforeBalance < totalDeduct) {
+      if (beforeBalanceNum < totalDeduct) { // 👈 MENGGUNAKAN ANGKA MURNI
         await trxMaster.rollback();
         await trxTenant.rollback();
-        return response.badRequest(res, 'Saldo tidak cukup untuk melakukan pembelian PPOB');
+        return response.badRequest(res, 'Saldo deposit tidak mencukupi untuk memproses transaksi PPOB ini');
       }
 
       const ref_id = `PPB-${tenant_id}-${store_id}-${Date.now()}`;
@@ -188,7 +178,7 @@ const PPOBController = {
         buyer_sku_code: value.buyer_sku_code,
         customer_no: value.customer_no,
         ref_id,
-        tr_id: value.tr_id, // 🔥 Kirim tr_id ke digiflazz.js
+        tr_id: value.tr_id,
       });
 
       if (String(result?.rc) !== '00' && String(result?.rc) !== '03') {
@@ -197,10 +187,8 @@ const PPOBController = {
         return response.badRequest(res, result?.message || 'Gagal membuat order PPOB Digiflazz');
       }
 
-      // Pemotongan fee aplikasi ke mitra berlaku untuk SEMUA jenis transaksi (Prepaid & Postpaid)
-      const platformFee = fee;
-      const afterPurchase = beforeBalance - basePrice;
-      const afterFee = afterPurchase - platformFee;
+      const afterPurchase = beforeBalance - purchaseModal;
+      const afterFee = afterPurchase - piposMargin;
 
       const orderData = {
         store_id,
@@ -209,16 +197,15 @@ const PPOBController = {
         buyer_sku_code: value.buyer_sku_code,
         customer_no: value.customer_no,
         ref_id,
-        // 🔥 AMBIL NAMA ASLI PRODUK DARI CACHE LOKAL JIKA DARI DIGIFLAZZ KOSONG
         product_name: result?.data?.product_name || product.product_name || value.buyer_sku_code,
-        price: basePrice,
+        price: purchaseModal,
         sale_price: value.sale_price,
         status: (() => {
           const rc = String(result?.rc || '');
-          if (rc === '00') return 'success';       // Langsung Sukses
-          if (rc === '03') return 'pending';        // Diproses/Antrian
-          if (['06','07','08','09'].includes(rc)) return 'failed'; // Gagal
-          return result?.status === 'Sukses' ? 'success' : 'pending'; // Fallback ke status text
+          if (rc === '00') return 'success';       
+          if (rc === '03') return 'pending';        
+          if (['06','07','08','09'].includes(rc)) return 'failed'; 
+          return result?.status === 'Sukses' ? 'success' : 'pending';
         })(),
         response: JSON.stringify(result),
         created_at: req.db.fn.now(),
@@ -228,44 +215,31 @@ const PPOBController = {
       const orderId = await trxTenant('ppob_orders').insert(orderData);
       const orderRef = orderId[0] || orderId;
 
-      // 1. Catat pemotongan harga beli (ke Digiflazz)
+      // 1. Catat pemotongan harga modal
       await WalletTransaction.createTransaction(trxMaster, {
         owner_id: owner.id,
         type: 'ppob_purchase',
-        amount: -basePrice,
+        amount: -purchaseModal,
         balance_after: afterPurchase,
         reference_type: 'ppob_orders',
         reference_id: orderRef,
         description: `Pembelian PPOB ${value.buyer_sku_code} untuk ${value.customer_no}`,
       });
 
-      // 2. Catat fee platform per transaksi PPOB
-      if (platformFee > 0) {
+      // 2. Catat margin PIPos (sebagai pengganti fee aplikasi)
+      if (piposMargin > 0) {
         await WalletTransaction.createTransaction(trxMaster, {
           owner_id: owner.id,
           type: 'transaction_fee',
-          amount: -platformFee,
+          amount: -piposMargin,
           balance_after: afterFee,
           reference_type: 'ppob_orders',
           reference_id: orderRef,
-          description: `Fee transaksi PPOB pada ref ${ref_id}`,
+          description: `Margin aplikasi PIPos pada ref ${ref_id}`,
         });
       }
 
-      // 3. Catat margin keuntungan owner (sale_price - price) — hanya untuk laporan
-      if (margin > 0) {
-        await WalletTransaction.createTransaction(trxMaster, {
-          owner_id: owner.id,
-          type: 'ppob_margin',
-          amount: margin,
-          balance_after: afterFee,
-          reference_type: 'ppob_orders',
-          reference_id: orderRef,
-          description: `Margin PPOB ${value.buyer_sku_code}: Rp ${margin.toLocaleString('id-ID')}`,
-        });
-      }
-
-      // Potong saldo: harga beli + fee platform
+      // Potong saldo
       await OwnerModel.subtractBalance(trxMaster, owner.id, totalDeduct);
 
       await trxTenant.commit();
@@ -282,7 +256,6 @@ const PPOBController = {
   },
 
   async digiflazzWebhook(req, res) {
-    // 🔥 1. CAPTURE RAW UNTUK DEBUG
     console.log("📩 WEBHOOK HEADERS:", JSON.stringify(req.headers));
 
     let payload;
@@ -316,7 +289,6 @@ const PPOBController = {
 
       const tenantDb = getTenantConnection(tenant);
 
-      // Normalisasi status berdasarkan RC (Response Code) Digiflazz
       let normalizedStatus = 'pending';
       const statusLower = String(status || '').toLowerCase();
 
@@ -326,10 +298,8 @@ const PPOBController = {
         normalizedStatus = 'failed';
       }
 
-      // 🔥 EXTRACT SN: SN bisa di field 'sn' atau di dalam 'message'
       const finalSn = sn || (statusLower === 'sukses' ? data.message : '');
 
-      // Update tabel ppob_orders di database tenant
       await tenantDb('ppob_orders')
         .where('ref_id', ref_id)
         .update({
@@ -349,7 +319,6 @@ const PPOBController = {
 
   async listProducts(req, res) {
     try {
-      // 🔥 AUTO-FIX DB: Bypass Digiflazz rate limit & is_active bug untuk SEMUA pascabayar
       await master('ppob_products')
         .where('type', 'postpaid')
         .update({ is_active: 1 })
@@ -357,13 +326,17 @@ const PPOBController = {
 
       let { category, force_sync } = req.query;
 
-      // Mapping Kategori
       let searchCategory = category;
       let searchType = undefined;
 
       const lowerCat = String(category || '').toLowerCase();
 
-      if (lowerCat.includes('pln')) {
+      // TAMBAHKAN 4 BARIS INI:
+      if (lowerCat.includes('pln token') || lowerCat.includes('token pln')) {
+        searchCategory = 'PLN';
+        searchType = 'prepaid';
+      // UBAH 'if' di bawah ini menjadi 'else if':
+      } else if (lowerCat.includes('pln')) {
         searchCategory = 'PLN PASCABAYAR';
       } else if (lowerCat.includes('bpjs')) {
         searchCategory = 'BPJS KESEHATAN';
@@ -380,7 +353,6 @@ const PPOBController = {
         searchType = 'prepaid';
       }
 
-      // 1. CEK APAKAH HARUS PAKSA SYNC
       let products = await PPOBProductModel.getAllProducts({
         category: searchCategory || undefined,
         type: searchType
@@ -391,18 +363,15 @@ const PPOBController = {
         try {
           const allProducts = await Digiflazz.productList();
           if (allProducts && allProducts.length > 0) {
-            // 🔥 AUDIT KATEGORI: Lihat semua kategori yang ada di Digiflazz
             const categories = [...new Set(allProducts.map(p => `${p.category} (${p.type})`))];
             console.log(`📦 DAFTAR KATEGORI DI DIGIFLAZZ:`, categories.join(', '));
 
             await PPOBProductModel.createOrUpdateProducts(allProducts);
 
-            // 🔥 AUDIT TOTAL: Cek berapa produk yang akhirnya ada di DB
             const totalInDb = await master('ppob_products').count({ total: '*' }).first();
             const totalPostpaid = await master('ppob_products').where({ type: 'postpaid' }).count({ total: '*' }).first();
             console.log(`📊 DB STATUS: Total=${totalInDb.total} | Postpaid=${totalPostpaid.total}`);
 
-            // Ambil ulang dengan filter
             products = await PPOBProductModel.getAllProducts({
               category: searchCategory || undefined,
               type: searchType
@@ -462,7 +431,6 @@ const PPOBController = {
         PPOBOrderModel.paginateOrders(req.db, store_id, offset, value.itemsPerPage, { search: value.q })
       );
 
-      // 🔥 AUTO-FIX: Isi nama produk yang kosong dari tabel ppob_products (Master)
       const skus = [...new Set(items.filter(i => !i.product_name || i.product_name === i.buyer_sku_code).map(i => i.buyer_sku_code))];
       if (skus.length > 0) {
         const productRows = await master('ppob_products').whereIn('buyer_sku_code', skus).select('buyer_sku_code', 'product_name');
@@ -493,19 +461,16 @@ const PPOBController = {
         return response.notFound(res, 'Order PPOB tidak ditemukan');
       }
 
-      // 🔥 AUTO-FIX: Isi nama produk jika kosong atau hanya SKU
       if (!order.product_name || order.product_name === order.buyer_sku_code) {
         const prod = await master('ppob_products').where('buyer_sku_code', order.buyer_sku_code).first();
         if (prod) order.product_name = prod.product_name;
       }
 
-      // 🔥 AUTO CHECK-STATUS: Jika masih pending, otomatis cek ke Digiflazz
       if (order.status === 'pending') {
         try {
           const digiResult = await Digiflazz.checkTransactionStatus(order.ref_id);
           const digiData = digiResult?.data || digiResult;
 
-          // Digiflazz response code (rc) '00' = sukses, '03' = pending
           const rc = String(digiData?.rc || '');
           const statusLower = String(digiData?.status || '').toLowerCase();
 
@@ -539,10 +504,6 @@ const PPOBController = {
     }
   },
 
-  /**
-   * 🔥 Manual Check-Status: Endpoint khusus untuk memaksa refresh status dari Digiflazz
-   * POST /api/stores/:store_id/ppob/orders/:ref_id/check-status
-   */
   async checkStatus(req, res) {
     try {
       const { store_id, ref_id } = req.params;
@@ -551,7 +512,6 @@ const PPOBController = {
         return response.notFound(res, 'Order PPOB tidak ditemukan');
       }
 
-      // 🔥 AUTO-FIX: Isi nama produk jika kosong atau hanya SKU
       if (!order.product_name || order.product_name === order.buyer_sku_code) {
         const prod = await master('ppob_products').where('buyer_sku_code', order.buyer_sku_code).first();
         if (prod) order.product_name = prod.product_name;

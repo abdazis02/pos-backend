@@ -37,7 +37,7 @@ const AuthController = {
 
       const tenant = await OwnerModel.getTenantByID(user.tenant_id);
 
-      if (user.role != 'superadmin') {
+      if (user.role != 'superadmin' && user.role != 'superadmin2') {
         const tenant_db = getTenantConnection(tenant);
 
         /* ================= DATA TAMBAHAN ================= */

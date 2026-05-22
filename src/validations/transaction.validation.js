@@ -13,7 +13,9 @@ const transactionValidations = Joi.object({
     then: Joi.number().min(0).required(),
     otherwise: Joi.any().strip().default(0)
   }),
-  notes: Joi.string().allow(null),
+  notes: Joi.string().allow(null, ''),
+  // BARIS TRANSAKSI OFFLINE DITERIMA
+  created_at: Joi.any().optional(),
 
   items: Joi.array()
     .items(transactionItemSchema)

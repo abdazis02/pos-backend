@@ -64,7 +64,7 @@ router.post(
 
 router.post(
   '/admin/ppob/sync-products',
-  authMiddleware(['superadmin']),
+  authMiddleware(['superadmin', 'superadmin2']),
   PPOBController.syncProducts
 );
 

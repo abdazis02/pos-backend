@@ -2,9 +2,26 @@ const master = require('../config/knexMaster');
 
 const PPOBProductModel = {
   async getAllProducts(filters = {}) {
+    // 1. Ambil semua layanan yang sedang DIMATIKAN (is_active = 0) dari web
+    const disabledServices = await master('services').where('is_active', 0);
+    
+    // 2. Samakan nama "Layanan" dengan nama "Kategori" di database produk
+    const disabledCategories = disabledServices.map(s => {
+       if (s.name === 'Paket Data') return 'Data';
+       if (s.name === 'Token PLN') return 'PLN';
+       if (s.name === 'FDAM') return 'PDAM'; // typo dari web Anda
+       if (s.name === 'Telkom/IndiHome') return 'Telkom';
+       return s.name; // Pulsa, BPJS, E-Money, Game
+    });
+
     let query = master('ppob_products').where('is_active', true);
 
-    // 🔥 FIX: Filter produk administratif yang tidak untuk dijual (Cek Nama/Inquiry)
+    // 3. BLOKIR SECARA OTOMATIS: Jangan ambil produk jika kategorinya sedang di-OFF-kan
+    if (disabledCategories.length > 0) {
+       query = query.whereNotIn('category', disabledCategories);
+    }
+
+    // Filter produk administratif yang tidak untuk dijual (Cek Nama/Inquiry)
     query = query.whereNot('product_name', 'like', '%Cek Nama%')
                  .whereNot('product_name', 'like', '%Inquiry%')
                  .whereNot('product_name', 'like', '%Cek Pengguna%');
@@ -14,8 +31,6 @@ const PPOBProductModel = {
     }
 
     if (filters.category) {
-      // 🔥 Gunakan WHERE LIKE agar pencarian kategori lebih fleksibel (misal: E-Money vs E-MONEY)
-      // 🔥 FIX: Cari juga di kolom 'brand', karena Digiflazz Pascabayar menaruh detail kategori di 'brand'
       query = query.where(function() {
         this.where('category', 'like', `%${filters.category}%`)
             .orWhere('brand', 'like', `%${filters.category}%`);
