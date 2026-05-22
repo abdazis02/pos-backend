@@ -272,8 +272,7 @@ const AdminClientController = {
 
       // Update status topup menjadi failed
       await master("wallet_topups").where({ id }).update({
-        status: 'failed',
-        updated_at: master.fn.now()
+        status: 'failed'
       });
 
       res.json({ success: true, message: "Topup berhasil ditolak." });
@@ -288,6 +287,7 @@ const AdminClientController = {
       const topups = await master("wallet_topups as wt")
         .join("owners as o", "o.id", "wt.owner_id")
         .where("wt.status", "pending")
+        .where("wt.payment_method", "manual_bca")
         .select(
           "wt.id",
           "o.business_name as nama_toko",
