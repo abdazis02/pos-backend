@@ -344,6 +344,14 @@ exports.getTransactions = async (req, res) => {
          else if (detail.status === 'failed' || detail.payment_status === 'failed') status = 'Gagal';
       }
 
+      let laba = Math.abs(parseFloat(l.amount)) || 0;
+      let grand_total = detail ? parseFloat(detail.total_cost || detail.amount || 0) : 0;
+
+      if (l.tipe === 'topup' || tipe === 'topup') {
+         grand_total = Math.abs(parseFloat(l.amount)) || 0;
+         laba = 0; // Top-up bukan margin/laba
+      }
+
       formattedData.push({
         id: l.id,
         tanggal: l.tanggal,
@@ -354,8 +362,8 @@ exports.getTransactions = async (req, res) => {
         ref_id: l.reference_id || '-',
         harga_modal: detail ? parseFloat(detail.capital_price || detail.amount || 0) : 0,
         tax: detail ? parseFloat(detail.tax || 0) : 0,
-        grand_total: detail ? parseFloat(detail.total_cost || detail.amount || 0) : 0,
-        laba: Math.abs(parseFloat(l.amount)) || 0,
+        grand_total: grand_total,
+        laba: laba,
         metode_pembayaran: detail ? (detail.payment_method || '-') : '-',
         status: status
       });
@@ -743,6 +751,7 @@ exports.getMonthlyReport = async (req, res) => {
     const year  = parseInt(month.slice(0, 4));
     const mon   = parseInt(month.slice(5, 7));
     const profitRow = await master('wallet_transactions')
+      .whereIn('type', ['transaction_fee', 'ppob_margin', 'ppob_fee'])
       .whereRaw('YEAR(created_at) = ? AND MONTH(created_at) = ?', [year, mon])
       .select(master.raw('COALESCE(SUM(ABS(amount)), 0) as total')).first();
     const totalProfit = parseFloat(profitRow.total) || 0;
@@ -763,19 +772,22 @@ exports.getMonthlyReport = async (req, res) => {
       )
       .orderBy('wt.created_at', 'desc');
 
-    const transactions = logs.map(l => ({
-      id:          l.id,
-      tanggal:     l.tanggal,
-      nama_toko:   l.nama_toko,
-      tipe:        l.reference_type === 'transactions' ? 'POS'
-                 : l.reference_type === 'ppob_orders'  ? 'PPOB'
-                 : (l.tipe || '-'),
-      produk:      l.produk || '-',
-      grand_total: parseFloat(l.laba) || 0,
-      laba:        parseFloat(l.laba) || 0,
-      status:      'Sukses',
-      ref_id:      l.reference_id || '-'
-    }));
+    const transactions = logs.map(l => {
+      const isTopup = l.tipe === 'topup' || l.tipe?.includes('topup');
+      return {
+        id:          l.id,
+        tanggal:     l.tanggal,
+        nama_toko:   l.nama_toko,
+        tipe:        l.reference_type === 'transactions' ? 'POS'
+                   : l.reference_type === 'ppob_orders'  ? 'PPOB'
+                   : (l.tipe || '-'),
+        produk:      l.produk || '-',
+        grand_total: parseFloat(l.laba) || 0,
+        laba:        isTopup ? 0 : (parseFloat(l.laba) || 0),
+        status:      'Sukses',
+        ref_id:      l.reference_id || '-'
+      };
+    });
 
     res.json({
       success: true,
