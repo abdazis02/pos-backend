@@ -12,6 +12,8 @@ module.exports.move = (file, tenant_id) => {
 }
 
 module.exports.remove = (filepath) => {
+  if (!filepath) return;
+  
   filepath = path.join(__dirname, '../../', filepath);
 
   if (fs.existsSync(filepath)) {
