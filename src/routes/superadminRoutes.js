@@ -59,6 +59,11 @@ router.get('/dashboard/chart', requireSuperadmin, superadminController.getDashbo
 router.get('/transactions', requireSuperadmin, superadminController.getTransactions);
 router.get('/transactions/recent', requireSuperadmin, superadminController.getTransactions);
 
+// --- TOPUP MANUAL ---
+const adminTenantController = require('../controllers/adminTenant.controllers');
+router.get('/topups/pending', requireSuperadmin, adminTenantController.getPendingTopups);
+router.put('/topups/:id/approve', requireSuperadmin, adminTenantController.approveTopup);
+
 // --- MANAJEMEN LAYANAN GLOBAL ---
 router.get('/services', requireSuperadmin, superadminController.getServices);
 router.put('/services/:id/toggle', requireSuperadmin, superadminController.updateServiceStatus);

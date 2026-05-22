@@ -10,7 +10,8 @@ const { pageValidations } = require("../validations/page.validation");
 const { coreApi, getQRISUrl } = require("../utils/midtrans");
 
 const topupValidation = Joi.object({
-  amount: Joi.number().required().min(10000) // 🔥 Minimal topup 10rb, tidak kaku ke 50/100rb
+  amount: Joi.number().required().min(10000), // 🔥 Minimal topup 10rb, tidak kaku ke 50/100rb
+  payment_method: Joi.string().valid('qris', 'manual_bca').default('qris')
 })
 const listValidations = pageValidations.keys({
   type: Joi.string().valid('', 'topup', 'transaction_fee')
@@ -49,32 +50,44 @@ const WalletTopupController = {
     try {
       const owner = await OwnerModel.getByTenantId(req.user.tenant_id)
 
-      coreApi.httpClient.http_client.defaults.headers.common['X-Override-Notification'] = `${process.env.URL}/api/wallet/webhook/midtrans`;
-      const transaction = await coreApi.charge({
-        payment_type: 'qris',
-        transaction_details: {
-          order_id: 'TOPUP-' + moment().unix(),
-          gross_amount: value.amount
-        },
-        custom_expiry: {
-          expiry_duration: 60,
-          unit: "minute"
-        }
-      });
+      let midtrans_transaction_id = null;
+      let qris_url = null;
+      let payment_method = value.payment_method;
+
+      // HANYA panggil Midtrans jika metode = qris
+      if (payment_method === 'qris') {
+        coreApi.httpClient.http_client.defaults.headers.common['X-Override-Notification'] = `${process.env.URL}/api/wallet/webhook/midtrans`;
+        const transaction = await coreApi.charge({
+          payment_type: 'qris',
+          transaction_details: {
+            order_id: 'TOPUP-' + moment().unix(),
+            gross_amount: value.amount
+          },
+          custom_expiry: {
+            expiry_duration: 60,
+            unit: "minute"
+          }
+        });
+        midtrans_transaction_id = transaction.transaction_id;
+        qris_url = getQRISUrl(midtrans_transaction_id);
+      } else {
+        // Untuk manual_bca, buat ID dummy untuk tracking
+        midtrans_transaction_id = 'MANUAL-' + moment().unix() + '-' + Math.floor(Math.random() * 1000);
+      }
 
       const data = {
         owner_id: owner.id,
-        midtrans_transaction_id: transaction.transaction_id,
+        midtrans_transaction_id: midtrans_transaction_id,
         amount: value.amount,
         status: 'pending',
-        payment_method: 'qris',
+        payment_method: payment_method,
         expired_at: moment().add(60, 'minutes').format('YYYY-MM-DD HH:mm:ss'),
       }
 
       const [id] = await trx("wallet_topups").insert(data);
       const topup = await trx("wallet_topups").where({ id }).first();
 
-      topup.qris_url = getQRISUrl(topup.midtrans_transaction_id)
+      topup.qris_url = qris_url;
 
       await trx.commit();
 

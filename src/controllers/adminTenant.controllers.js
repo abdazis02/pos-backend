@@ -209,6 +209,73 @@ const AdminClientController = {
     } catch (err) {
       response.error(res, err, err.message, 500);
     }
+  },
+
+  async approveTopup(req, res) {
+    const { id } = req.params;
+    const trx = await master.transaction();
+    
+    try {
+      const topup = await trx("wallet_topups").where({ id, status: 'pending' }).first();
+      
+      if (!topup) {
+        await trx.rollback();
+        return res.status(404).json({ success: false, message: "Topup tidak ditemukan atau sudah diproses." });
+      }
+
+      // Update status topup
+      await trx("wallet_topups").where({ id }).update({
+        status: 'success',
+        paid_at: master.fn.now()
+      });
+
+      // Ambil saldo owner
+      const owner = await trx("owners as o").forUpdate().where('o.id', topup.owner_id).first('o.wallet_balance');
+      const newBalance = owner.wallet_balance + topup.amount;
+
+      // Catat mutasi transaksi
+      await trx("wallet_transactions").insert({
+        owner_id: topup.owner_id,
+        type: 'topup',
+        amount: topup.amount,
+        balance_after: newBalance,
+        reference_type: 'wallet_topups',
+        reference_id: topup.id,
+        description: `Topup saldo lewat Konfirmasi Manual (Admin)`
+      });
+
+      // Tambah saldo
+      await trx("owners").where({ id: topup.owner_id }).update({
+        wallet_balance: newBalance
+      });
+
+      await trx.commit();
+      res.json({ success: true, message: "Topup berhasil disetujui, saldo mitra telah ditambahkan." });
+    } catch (e) {
+      await trx.rollback();
+      console.error('Approve topup error:', e.message);
+      res.status(500).json({ success: false, message: "Terjadi kesalahan server saat menyetujui topup." });
+    }
+  },
+
+  async getPendingTopups(req, res) {
+    try {
+      const topups = await master("wallet_topups as wt")
+        .join("owners as o", "o.id", "wt.owner_id")
+        .where("wt.status", "pending")
+        .select(
+          "wt.id",
+          "o.business_name as nama_toko",
+          "wt.amount",
+          "wt.payment_method",
+          "wt.created_at"
+        )
+        .orderBy("wt.created_at", "desc");
+        
+      res.json({ success: true, data: topups });
+    } catch (e) {
+      res.status(500).json({ success: false, message: e.message });
+    }
   }
 };
 
