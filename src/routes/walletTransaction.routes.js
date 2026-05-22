@@ -11,6 +11,13 @@ router.get(
   WalletTransactionController.list
 );
 
+router.get(
+  '/bank-info',
+  authMiddleware(['owner']),
+  checkTenant,
+  WalletTransactionController.getBankInfo
+);
+
 router.post(
   '/topup',
   authMiddleware(['owner']),

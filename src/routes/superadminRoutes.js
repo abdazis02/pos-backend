@@ -69,6 +69,10 @@ router.put('/topups/:id/reject', requireSuperadmin, adminTenantController.reject
 router.get('/services', requireSuperadmin, superadminController.getServices);
 router.put('/services/:id/toggle', requireSuperadmin, superadminController.updateServiceStatus);
 
+// 6. APP SETTINGS
+router.get('/app-settings', requireSuperadmin, superadminController.getAppSettings);
+router.put('/app-settings', requireSuperadmin, superadminController.updateAppSettings);
+
 // --- MANAJEMEN MARGIN PRODUK PPOB ---
 router.get('/products', requireSuperadmin, superadminController.getProducts);
 router.put('/products/:id/margin', requireSuperadmin, auditLog('UPDATE_MARGIN', 'margin', (req) => `Margin produk ID ${req.params.id} diubah: ${JSON.stringify(req.body)}`), superadminController.updateProductMargin);

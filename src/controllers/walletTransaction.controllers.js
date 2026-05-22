@@ -198,6 +198,34 @@ const WalletTopupController = {
       return response.error(res, error, 'Terjadi kesalahan saat mengupdate transaksi');
     }
   },
+
+  async getBankInfo(req, res) {
+    try {
+      // Mengambil settingan dari tabel app_settings (yang akan dimasukkan via HeidiSQL)
+      const settingsRaw = await master("app_settings").select("setting_key", "setting_value");
+      
+      const settings = {};
+      settingsRaw.forEach(item => {
+        settings[item.setting_key] = item.setting_value;
+      });
+
+      // Default fallback jika belum di-set di DB
+      return response.success(res, {
+        bank_name: settings.bank_name || 'BCA',
+        bank_account: settings.bank_account || 'Menunggu Info Admin',
+        bank_owner: settings.bank_owner || 'PIPos',
+        whatsapp_number: settings.whatsapp_number || '+6282218057732'
+      });
+    } catch (e) {
+      // Jika tabel belum ada, kembalikan nilai default agar aplikasi tidak crash
+      return response.success(res, {
+        bank_name: 'BCA',
+        bank_account: 'Menunggu Info Admin',
+        bank_owner: 'PIPos',
+        whatsapp_number: '+6282218057732'
+      });
+    }
+  }
 }
 
 module.exports = WalletTopupController;

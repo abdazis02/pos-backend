@@ -27,6 +27,46 @@ exports.getClients = async (req, res) => {
   }
 };
 
+// ============================================
+// APP SETTINGS
+// ============================================
+
+exports.getAppSettings = async (req, res) => {
+  try {
+    const settingsRaw = await master("app_settings").select("setting_key", "setting_value");
+    const settings = {};
+    settingsRaw.forEach(item => {
+      settings[item.setting_key] = item.setting_value;
+    });
+
+    res.status(200).json({ success: true, data: settings });
+  } catch (error) {
+    console.error("Error getAppSettings:", error);
+    res.status(500).json({ success: false, message: "Gagal mengambil pengaturan" });
+  }
+};
+
+exports.updateAppSettings = async (req, res) => {
+  try {
+    const updates = req.body; // { bank_name: "BCA", ... }
+    
+    // Gunakan transaksi atau simpan satu-satu
+    for (const [key, value] of Object.entries(updates)) {
+      if (typeof value === 'string') {
+        await master.raw(
+          `INSERT INTO app_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = ?`,
+          [key, value, value]
+        );
+      }
+    }
+
+    res.status(200).json({ success: true, message: "Pengaturan berhasil disimpan" });
+  } catch (error) {
+    console.error("Error updateAppSettings:", error);
+    res.status(500).json({ success: false, message: "Gagal menyimpan pengaturan" });
+  }
+};
+
 exports.createClient = async (req, res) => {
   try {
     const { nama_toko, nama_owner, email, no_hp, alamat } = req.body;
