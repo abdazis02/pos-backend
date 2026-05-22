@@ -312,6 +312,7 @@ exports.getTransactions = async (req, res) => {
 
     const { getTenantConnection } = require('../config/knexTenant');
     const formattedData = [];
+    const uniqueMap = new Map();
 
     for (let l of logs) {
       let clientDb = null;
@@ -345,13 +346,47 @@ exports.getTransactions = async (req, res) => {
       }
 
       let laba = Math.abs(parseFloat(l.amount)) || 0;
-      let grand_total = detail ? parseFloat(detail.total_cost || detail.amount || 0) : 0;
+      let grand_total = detail ? parseFloat(detail.total_cost || detail.amount || detail.sale_price || detail.price || 0) : 0;
+      let harga_modal = detail ? parseFloat(detail.capital_price || detail.amount || detail.price || 0) : 0;
 
       if (l.tipe === 'topup' || tipe === 'topup') {
          grand_total = Math.abs(parseFloat(l.amount)) || 0;
          laba = 0; // Top-up bukan margin/laba
+         harga_modal = 0;
+      }
+      
+      // GABUNGKAN PPOB MENJADI 1 BARIS
+      if (l.reference_type === 'ppob_orders') {
+         tipe = 'PPOB';
+         const uniqueKey = 'ppob-' + l.reference_id;
+         
+         if (!uniqueMap.has(uniqueKey)) {
+            uniqueMap.set(uniqueKey, {
+               id: l.id,
+               tanggal: l.tanggal,
+               nama_toko: l.nama_toko,
+               tipe: tipe,
+               produk: detail ? (detail.product_name || detail.description || l.produk) : l.produk,
+               no_tujuan: detail ? (detail.target_number || '-') : '-',
+               ref_id: l.reference_id || '-',
+               harga_modal: harga_modal,
+               tax: detail ? parseFloat(detail.tax || 0) : 0,
+               grand_total: grand_total,
+               laba: 0,
+               metode_pembayaran: detail ? (detail.payment_method || '-') : '-',
+               status: status
+            });
+            formattedData.push(uniqueMap.get(uniqueKey));
+         }
+
+         const entry = uniqueMap.get(uniqueKey);
+         if (l.tipe !== 'ppob_purchase') {
+             entry.laba += laba; // Tambahkan laba jika ini baris margin/fee
+         }
+         continue; // Selesai proses baris PPOB ini
       }
 
+      // Baris Non-PPOB (POS / Topup)
       formattedData.push({
         id: l.id,
         tanggal: l.tanggal,
@@ -360,7 +395,7 @@ exports.getTransactions = async (req, res) => {
         produk: detail ? (detail.product_name || detail.description || l.produk) : l.produk,
         no_tujuan: detail ? (detail.target_number || '-') : '-',
         ref_id: l.reference_id || '-',
-        harga_modal: detail ? parseFloat(detail.capital_price || detail.amount || 0) : 0,
+        harga_modal: harga_modal,
         tax: detail ? parseFloat(detail.tax || 0) : 0,
         grand_total: grand_total,
         laba: laba,
@@ -772,22 +807,51 @@ exports.getMonthlyReport = async (req, res) => {
       )
       .orderBy('wt.created_at', 'desc');
 
-    const transactions = logs.map(l => {
+    const transactions = [];
+    const uniqueMap = new Map();
+
+    for (let l of logs) {
       const isTopup = l.tipe === 'topup' || l.tipe?.includes('topup');
-      return {
+      
+      if (l.reference_type === 'ppob_orders') {
+         const uniqueKey = 'ppob-' + l.reference_id;
+         if (!uniqueMap.has(uniqueKey)) {
+             uniqueMap.set(uniqueKey, {
+                id:          l.id,
+                tanggal:     l.tanggal,
+                nama_toko:   l.nama_toko,
+                tipe:        'PPOB',
+                produk:      l.produk || '-',
+                grand_total: 0,
+                laba:        0,
+                status:      'Sukses',
+                ref_id:      l.reference_id || '-'
+             });
+             transactions.push(uniqueMap.get(uniqueKey));
+         }
+         
+         const entry = uniqueMap.get(uniqueKey);
+         if (l.tipe === 'ppob_purchase') {
+            entry.grand_total += parseFloat(l.laba) || 0; // Tambahkan modal ke total
+         } else {
+            entry.laba += parseFloat(l.laba) || 0; // Ini adalah fee admin (laba)
+            entry.grand_total += parseFloat(l.laba) || 0; // Tambahkan fee ke total bayar
+         }
+         continue;
+      }
+
+      transactions.push({
         id:          l.id,
         tanggal:     l.tanggal,
         nama_toko:   l.nama_toko,
-        tipe:        l.reference_type === 'transactions' ? 'POS'
-                   : l.reference_type === 'ppob_orders'  ? 'PPOB'
-                   : (l.tipe || '-'),
+        tipe:        l.reference_type === 'transactions' ? 'POS' : (l.tipe || '-'),
         produk:      l.produk || '-',
         grand_total: parseFloat(l.laba) || 0,
         laba:        isTopup ? 0 : (parseFloat(l.laba) || 0),
         status:      'Sukses',
         ref_id:      l.reference_id || '-'
-      };
-    });
+      });
+    }
 
     res.json({
       success: true,
