@@ -231,7 +231,9 @@ const AdminClientController = {
 
       // Ambil saldo owner
       const owner = await trx("owners as o").forUpdate().where('o.id', topup.owner_id).first('o.wallet_balance');
-      const newBalance = owner.wallet_balance + topup.amount;
+      const currentBalance = parseFloat(owner.wallet_balance) || 0;
+      const topupAmount = parseFloat(topup.amount) || 0;
+      const newBalance = currentBalance + topupAmount;
 
       // Catat mutasi transaksi
       await trx("wallet_transactions").insert({
@@ -255,6 +257,29 @@ const AdminClientController = {
       await trx.rollback();
       console.error('Approve topup error:', e.message);
       res.status(500).json({ success: false, message: "Terjadi kesalahan server saat menyetujui topup." });
+    }
+  },
+
+  async rejectTopup(req, res) {
+    const { id } = req.params;
+    
+    try {
+      const topup = await master("wallet_topups").where({ id, status: 'pending' }).first();
+      
+      if (!topup) {
+        return res.status(404).json({ success: false, message: "Topup tidak ditemukan atau sudah diproses." });
+      }
+
+      // Update status topup menjadi failed
+      await master("wallet_topups").where({ id }).update({
+        status: 'failed',
+        updated_at: master.fn.now()
+      });
+
+      res.json({ success: true, message: "Topup berhasil ditolak." });
+    } catch (e) {
+      console.error('Reject topup error:', e.message);
+      res.status(500).json({ success: false, message: "Terjadi kesalahan server saat menolak topup." });
     }
   },
 

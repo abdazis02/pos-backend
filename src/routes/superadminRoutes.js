@@ -63,6 +63,7 @@ router.get('/transactions/recent', requireSuperadmin, superadminController.getTr
 const adminTenantController = require('../controllers/adminTenant.controllers');
 router.get('/topups/pending', requireSuperadmin, adminTenantController.getPendingTopups);
 router.put('/topups/:id/approve', requireSuperadmin, adminTenantController.approveTopup);
+router.put('/topups/:id/reject', requireSuperadmin, adminTenantController.rejectTopup);
 
 // --- MANAJEMEN LAYANAN GLOBAL ---
 router.get('/services', requireSuperadmin, superadminController.getServices);
