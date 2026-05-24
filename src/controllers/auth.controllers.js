@@ -278,12 +278,12 @@ const AuthController = {
   ===================================================== */
   async registerGoogle(req, res) {
     const {
-      email, name, username, business_name, business_category,
+      email, name, business_name, business_category,
       phone, province, city, district, subdistrict, address,
       password, idToken
     } = req.body;
 
-    if (!email || !username || !business_name || !password || !idToken) {
+    if (!email || !business_name || !password || !idToken) {
       return response.badRequest(res, 'Data pendaftaran tidak lengkap.');
     }
 
@@ -298,12 +298,9 @@ const AuthController = {
         return response.forbidden(res, 'Email tidak sesuai dengan token Google.');
       }
 
-      // 2. Cek duplikasi email & username
+      // 2. Cek duplikasi email
       const existingEmail = await UserModel.findByEmail(email);
       if (existingEmail) return response.badRequest(res, 'Email sudah terdaftar.');
-
-      const existingUser = await master("users").where("username", username).first();
-      if (existingUser) return response.badRequest(res, 'Username sudah digunakan.');
 
       // 3. Alur pendaftaran
       let db_name, db_user, db_pass, owner_id, tenant_id;
@@ -330,7 +327,6 @@ const AuthController = {
         await trx("users").insert({
           tenant_id: tenant_id,
           name: name,
-          username: username, // Simpan username
           email: email,
           password: hashedPassword,
           role: 'owner',
@@ -374,7 +370,6 @@ const AuthController = {
         store_id: store_id,
         role: user.role,
         name: user.name,
-        username: user.username,
         email: user.email,
         db_name: db_name,
         business_name,

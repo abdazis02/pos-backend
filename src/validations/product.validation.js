@@ -115,6 +115,10 @@ const productValidations = Joi.object({
     then: Joi.number().required().greater(0).integer(),
     otherwise: Joi.any().strip().default(null)
   }),
+  expired_date: Joi.date().iso().allow(null, ""), // 🔥 Tambahan
+  batch_number: Joi.string().trim().allow(null, ""), // 🔥 Tambahan
+  wholesale_price: Joi.number().min(0).allow(null, ""), // 🔥 Tambahan
+  min_wholesale_qty: Joi.number().integer().min(1).allow(null, ""), // 🔥 Tambahan
 })
 
 // module.exports = productValidation;

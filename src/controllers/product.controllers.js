@@ -138,6 +138,11 @@ const ProductController = {
       value.buy_qty ??= null;
       value.free_qty ??= null;
 
+      value.batch_number ??= null;
+      value.expired_date ??= null;
+      value.wholesale_price ??= null;
+      value.min_wholesale_qty ??= null;
+
       if (product.barcode != value.barcode) {
         const existing = await ProductModel.findProductByBarcode(req.db, store_id, value.barcode);
         if (!!existing) return response.badRequest(res, 'Barcode sudah terdaftar di toko ini');
