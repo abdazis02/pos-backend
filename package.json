@@ -1,5 +1,5 @@
 {
-  "name": "kasir-multi-tenant",
+  "name": "pipos-backend",
   "version": "1.0.0",
   "description": "Aplikasi Kasir Multi-Tenant SaaS",
   "main": "src/server.js",
