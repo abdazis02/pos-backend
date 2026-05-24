@@ -79,6 +79,7 @@ const AuthController = {
         role: user.role,
         name: user.name,
         email: user.email,
+        commission_rate: user.commission_rate, // 🔥
         db_name: tenant?.db_name,
         business_name,
         business_category, // 🔥 Masukkan kategori ke payload JWT
@@ -132,6 +133,7 @@ const AuthController = {
           role: req.user.role,
           name: req.user.name,
           email: req.user.email,
+          commission_rate: req.user.commission_rate, // 🔥
           business_name: req.user.business_name,
           business_category: req.user.business_category,
           address: req.user.address, // 🔥
@@ -371,6 +373,7 @@ const AuthController = {
         role: user.role,
         name: user.name,
         email: user.email,
+        commission_rate: user.commission_rate, // 🔥
         db_name: db_name,
         business_name,
         business_category,

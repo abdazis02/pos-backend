@@ -24,6 +24,8 @@ function mapTransactionToFrontend(tx, owner_id, items = []) {
     transaction_id: tx.id,
     idFull: tx.idFull || `TX${seg1}${seg2}${seg3}`,
     cashier: tx.cashier || '-',
+    table_id: tx.table_id,
+    table_number: tx.table_number,
     total_cost: tx.total_cost,
     payment_method: tx.payment_method,
     received_amount: tx.received_amount,
@@ -117,7 +119,7 @@ const TransactionController = {
         return response.badRequest(res, error.message, error.details);
       }
 
-      const { payment_method, received_amount, notes, items, created_at } = value;
+      const { payment_method, received_amount, notes, items, created_at, table_id } = value;
 
       // Verifikasi item transaksi
       let grossSubtotal = 0;    // total harga sebelum diskon
@@ -189,6 +191,14 @@ const TransactionController = {
         // Safety
         if (discountAmount > itemGross) discountAmount = itemGross;
 
+        // Hitung Komisi (Jika ada handled_by)
+        let commissionAmount = 0;
+        if (item.handled_by) {
+          const handler = await master("users").where("id", item.handled_by).first('commission_rate');
+          const rate = parseFloat(handler?.commission_rate || 0);
+          commissionAmount = netSubtotal * (rate / 100);
+        }
+
         processedItems.push({
           product_id: product.id,
           // Info dari tabel produk
@@ -206,7 +216,9 @@ const TransactionController = {
           qty: item.qty,
           discount_amount: discountAmount,
           subtotal: netSubtotal,
-          notes: item.notes
+          notes: item.notes,
+          handled_by: item.handled_by, // 🔥
+          commission_amount: commissionAmount, // 🔥
         });
 
         grossSubtotal += itemGross;
@@ -235,6 +247,7 @@ const TransactionController = {
       const transaction = {
         store_id,
         user_id: userId,
+        table_id, // 🔥
         total_cost: grandTotal,
         payment_method,
         received_amount: payment_method != 'qris' ? received_amount : 0,

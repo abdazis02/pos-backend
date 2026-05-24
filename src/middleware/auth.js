@@ -25,6 +25,7 @@ const authMiddleware = (roles = []) => {
                 role: decoded.role,
                 name: decoded.name,
                 email: decoded.email,
+                commission_rate: decoded.commission_rate, // 🔥
                 db_name: decoded.db_name,
                 business_name: decoded.business_name,
                 store_name: decoded.store_name,

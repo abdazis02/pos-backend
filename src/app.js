@@ -15,6 +15,7 @@ const reportRoutes = require('./routes/report.routes');
 const activityLogRoutes = require('./routes/activityLog.routes');
 const backupRoutes = require('./routes/backup.routes');
 const ownerRoutes = require('./routes/owner.routes');
+const tableRoutes = require('./routes/table.routes'); // 🔥
 const syncRoutes = require('./routes/sync.routes');
 const walletTransactionRoutes = require('./routes/walletTransaction.routes');
 const productReturnRoutes = require('./routes/productReturn.routes');
@@ -53,6 +54,7 @@ app.use('/api/stores', activityLogRoutes);
 app.use('/api/stores', productReturnRoutes);
 app.use('/api/backup', backupRoutes);
 app.use('/api/owner', ownerRoutes);
+app.use('/api/stores', tableRoutes); // 🔥
 app.use('/api/wallet', walletTransactionRoutes);
 app.use('/api/stores', ppobRoutes);
 // webhookRoutes sudah dipindah ke atas (sebelum express.json())

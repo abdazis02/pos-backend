@@ -4,6 +4,7 @@ const transactionItemSchema = Joi.object({
   product_id: Joi.number().required(),
   qty: Joi.number().integer().min(1).required(),
   notes: Joi.string().allow('', null).trim(),
+  handled_by: Joi.number().unsigned().allow(null), // 🔥 Untuk Komisi
 });
 
 const transactionValidations = Joi.object({
@@ -16,6 +17,7 @@ const transactionValidations = Joi.object({
   notes: Joi.string().allow(null, ''),
   // BARIS TRANSAKSI OFFLINE DITERIMA
   created_at: Joi.any().optional(),
+  table_id: Joi.number().unsigned().allow(null), // 🔥 Untuk Restoran
 
   items: Joi.array()
     .items(transactionItemSchema)

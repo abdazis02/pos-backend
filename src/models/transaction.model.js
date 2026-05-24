@@ -46,11 +46,13 @@ const TransactionModel = {
   async getItemsByTransactionIds(db, transactionIds) {
     const rows = await db("transaction_items as ti")
       .leftJoin("products as p", "p.id", "ti.product_id")
+      .leftJoin(process.env.DB_NAME + '.users as u', 'u.id', 'ti.handled_by')
       .whereIn("ti.transaction_id", transactionIds)
       .select(
         'ti.transaction_id', 'ti.product_id', 'p.name as product_name', 'p.sku',
         'ti.price', 'ti.qty as quantity', 'ti.cost_price', 'ti.subtotal',
-        'ti.discount_type', 'ti.discount_value', 'ti.discount_amount'
+        'ti.discount_type', 'ti.discount_value', 'ti.discount_amount',
+        'ti.handled_by', 'u.name as handler_name', 'ti.commission_amount'
       )
 
     // PERBAIKAN: Mengganti Object.groupBy dengan reduce agar support semua versi Node.js
@@ -84,9 +86,10 @@ const TransactionModel = {
   findTransactionById(db, store_id, id) {
     return db("transactions as t")
       .join(process.env.DB_NAME + '.users as u', 'u.id', 't.user_id')
+      .leftJoin('restaurant_tables as rt', 'rt.id', 't.table_id')
       .where('t.store_id', store_id)
       .where('t.id', id)
-      .first('t.*', 'u.name as cashier')
+      .first('t.*', 'u.name as cashier', 'rt.table_number')
   },
 
   // Update transaksi

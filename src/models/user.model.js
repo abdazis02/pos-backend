@@ -48,9 +48,9 @@ const UserModel = {
     },
 
     // Create user (tenant)
-    async create({ tenant_id, store_id, name, email, is_active, password, role }) {
+    async create({ tenant_id, store_id, name, email, is_active, password, role, commission_rate }) {
         const verified_at = master.fn.now() // TODO: jangan langsung verifikasi, tapi kirim email dulu
-        const [id] = await master("users").insert({ tenant_id, store_id, name, email, is_active, password, role, verified_at })
+        const [id] = await master("users").insert({ tenant_id, store_id, name, email, is_active, password, role, verified_at, commission_rate })
         return id;
     },
 

@@ -25,7 +25,7 @@ const UserController = {
   async create(req, res) {
     try {
       const { store_id } = req.params;
-      const { name, email, password, role } = req.body;
+      const { name, email, password, role, commission_rate } = req.body;
       const { tenant_id, role: user_role, is_active } = req.user;
 
       // validasi unique email
@@ -46,7 +46,8 @@ const UserController = {
 
       const hashed = await bcrypt.hash(password, 10);
       await UserModel.create({
-        tenant_id, store_id, name, email, is_active, password: hashed, role: user_role == 'owner' ? role : 'cashier'
+        tenant_id, store_id, name, email, is_active, password: hashed, role: user_role == 'owner' ? role : 'cashier',
+        commission_rate: commission_rate || 0
       });
 
       // Logging aktivitas: tambah user
@@ -68,7 +69,7 @@ const UserController = {
     try {
       const { tenant_id } = req.user;
       const { store_id, id } = req.params;
-      const { name, email, password, role, is_active } = req.body;
+      const { name, email, password, role, is_active, commission_rate } = req.body;
 
       const user = await UserModel.findById(tenant_id, store_id, id);
       if (!user)
@@ -88,6 +89,7 @@ const UserController = {
       if (email !== undefined) updateData.email = email;
       if (role !== undefined) updateData.role = role;
       if (is_active !== undefined) updateData.is_active = is_active;
+      if (commission_rate !== undefined) updateData.commission_rate = commission_rate;
       if (password) updateData.password = await bcrypt.hash(password, 10);
 
       await UserModel.update(id, updateData);
