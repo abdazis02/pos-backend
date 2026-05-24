@@ -7,6 +7,8 @@ const AuthController = require('../controllers/auth.controllers');
 
 // Public
 router.post('/login', AuthController.login);
+router.post('/google', AuthController.googleAuth);
+router.post('/register-google', AuthController.registerGoogle);
 
 // Protected
 router.get('/profile', authMiddleware(), tenantResolver, AuthController.getProfile);
