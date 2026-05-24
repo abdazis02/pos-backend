@@ -13,20 +13,15 @@ router.get(
   StoreController.list
 );
 
+const upload = require('../middleware/upload');
+
 // POST /api/stores - Create new store (owner only)
 router.post(
   '/',
   authMiddleware(['owner']),
   tenantResolver,
+  upload.single('image'),
   StoreController.create
-);
-
-// GET /api/stores/:id - Get single store
-router.get(
-  '/:id',
-  authMiddleware(['owner', 'admin', 'cashier']),
-  tenantResolver,
-  StoreController.getStore
 );
 
 // PUT /api/stores/:id - Update store (owner only)
@@ -34,6 +29,7 @@ router.put(
   '/:id',
   authMiddleware(['owner']),
   tenantResolver,
+  upload.single('image'),
   StoreController.update
 );
 

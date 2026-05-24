@@ -31,9 +31,14 @@ const StoreController = {
   // Create new store
   async create(req, res) {
     try {
-      const { value, error } = storeValidations.validate(req.body);
+      const { value, error } = storeValidations.validate(req.body, { abortEarly: true, stripUnknown: true });
       if (error)
         return response.badRequest(res, error.details[0].message, error.details)
+
+      // Ambil path gambar dari upload jika ada
+      if (req.file) {
+        value.logo_url = move(req.file, req.user.tenant_id);
+      }
 
       const storeId = await StoreModel.createStore(req.db, value);
 
@@ -74,13 +79,18 @@ const StoreController = {
     try {
       const { id } = req.params;
 
-      const { value, error } = storeValidations.validate(req.body);
+      const { value, error } = storeValidations.validate(req.body, { abortEarly: true, stripUnknown: true });
       if (error)
         return response.badRequest(res, error.details[0].message, error.details)
 
       const storeExists = await StoreModel.findStoreById(req.db, id);
       if (!storeExists)
         return response.notFound(res, 'Toko tidak ditemukan');
+
+      // Jika ada file gambar baru
+      if (req.file) {
+        value.logo_url = move(req.file, req.user.tenant_id);
+      }
 
       const updateData = {};
       if (!!value.name) updateData.name = value.name;
@@ -90,6 +100,7 @@ const StoreController = {
       if (!!value.midtrans_merchan_id) updateData.midtrans_merchan_id = value.midtrans_merchan_id;
       if (!!value.midtrans_client_key) updateData.midtrans_client_key = value.midtrans_client_key;
       if (!!value.midtrans_server_key) updateData.midtrans_server_key = value.midtrans_server_key;
+      if (!!value.logo_url) updateData.logo_url = value.logo_url;
 
       if (Object.keys(updateData).length === 0) {
         return response.badRequest(res, 'Tidak ada data yang diupdate');
@@ -107,6 +118,10 @@ const StoreController = {
         action: 'update_setting',
         detail: 'Update pengaturan toko'
       });
+
+      if (storeExists.logo_url && updateData.logo_url && storeExists.logo_url != updateData.logo_url) {
+        remove(storeExists.logo_url);
+      }
 
       return response.success(res, updatedStore, 'Toko berhasil diupdate');
     } catch (error) {

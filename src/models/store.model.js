@@ -21,9 +21,9 @@ const StoreModel = {
   },
 
   async createStore(db, data) {
-    const { name, address, phone, tax_percentage } = data;
+    const { name, address, phone, tax_percentage, logo_url } = data;
 
-    const [id] = await db("stores").insert({ name, address, phone, tax_percentage })
+    const [id] = await db("stores").insert({ name, address, phone, tax_percentage, logo_url })
     return id;
   },
 
