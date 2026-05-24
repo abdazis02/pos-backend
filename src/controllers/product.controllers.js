@@ -69,6 +69,13 @@ const ProductController = {
       }
 
       value.store_id = store_id
+
+      // 🔥 CLEANUP: Pastikan string kosong dikonversi ke null agar database tidak error
+      const cleanupFields = ['expired_date', 'batch_number', 'wholesale_price', 'min_wholesale_qty', 'sku', 'barcode', 'description', 'category'];
+      cleanupFields.forEach(field => {
+        if (value[field] === '') value[field] = null;
+      });
+
       const product_id = await ProductModel.createProduct(req.db, value);
       const product = await ProductModel.findProductById(req.db, store_id, product_id);
 
@@ -131,17 +138,12 @@ const ProductController = {
       }
 
       // Normalisasi input dari query validation yang ter-strip
-      value.barcode ??= null;
-      value.discount_value ??= null;
-      value.discount_bundle_min_qty ??= null;
-      value.discount_bundle_value ??= null;
-      value.buy_qty ??= null;
-      value.free_qty ??= null;
-
-      value.batch_number ??= null;
-      value.expired_date ??= null;
-      value.wholesale_price ??= null;
-      value.min_wholesale_qty ??= null;
+      const cleanupFields = ['expired_date', 'batch_number', 'wholesale_price', 'min_wholesale_qty', 'sku', 'barcode', 'description', 'category', 'discount_value', 'discount_bundle_min_qty', 'discount_bundle_value', 'buy_qty', 'free_qty'];
+      cleanupFields.forEach(field => {
+        if (value[field] === '' || value[field] === undefined) {
+          value[field] = null;
+        }
+      });
 
       if (product.barcode != value.barcode) {
         const existing = await ProductModel.findProductByBarcode(req.db, store_id, value.barcode);
