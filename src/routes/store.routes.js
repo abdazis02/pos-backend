@@ -13,6 +13,14 @@ router.get(
   StoreController.list
 );
 
+// GET /api/stores/:id - Get single store
+router.get(
+  '/:id',
+  authMiddleware(['owner', 'admin', 'cashier']),
+  tenantResolver,
+  StoreController.getStore
+);
+
 const upload = require('../middleware/upload');
 
 // POST /api/stores - Create new store (owner only)
