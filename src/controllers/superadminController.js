@@ -202,11 +202,6 @@ exports.getDashboardStats = async (req, res) => {
     res.status(200).json({
       success: true,
       data: {
-        total: owners.length, // 🔥 Tambahkan field ini (total tenant)
-        aktif: aktif,        // 🔥 Gunakan nama kecil agar pas dengan Flutter
-        suspend: suspend,
-        expired: blokir,
-        totalSaldo: saldoMitra,
         saldoDigiflazz,
         saldoMitra, 
         totalTransaksiAllTime, 
