@@ -138,7 +138,7 @@ const AuthController = {
           business_category: req.user.business_category,
           address: req.user.address, // 🔥
           phone: req.user.phone,     // 🔥
-          balance: await OwnerModel.getBalanceByTenant(master, req.user.tenant_id),
+          balance: req.user.tenant_id ? await OwnerModel.getBalanceByTenant(master, req.user.tenant_id) : 0, // 🔥 SAFE CHECK
           store_name: req.user.store_name,
           stores,
         }
