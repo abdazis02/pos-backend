@@ -6,10 +6,10 @@ const ReportController = {
   async summary(req, res) {
     try {
       const { store_id } = req.params;
-      const { start, end, payment_method, timezone = "+00:00" } = req.query;
+      const { start, end, payment_method } = req.query;
 
-      // 🔥 FIX TIMEZONE: Gunakan CONVERT_TZ agar 'Hari Ini' di Ternate sama dengan di DB
-      const dateFilter = (col) => `DATE(CONVERT_TZ(${col}, '+00:00', '${timezone}'))`;
+      // 🔥 FIX: Kembalikan ke DATE asli karena DB sudah hardlock +09:00
+      const dateFilter = (col) => `DATE(${col})`;
 
       // 1. KASIR SUMMARY (POS)
       const cashSummaryQuery = req.db("transactions").where({ store_id })
@@ -438,13 +438,13 @@ const ReportController = {
   async detailedSalesReport(req, res) {
     try {
       const { store_id } = req.params;
-      const { start, end, timezone = "+00:00" } = req.query;
+      const { start, end } = req.query;
 
       if (!start || !end) {
         return response.badRequest(res, 'Range tanggal wajib diisi');
       }
 
-      const dateFilter = (col) => `DATE(CONVERT_TZ(${col}, '+00:00', '${timezone}'))`;
+      const dateFilter = (col) => `DATE(${col})`;
 
       // 1. Ambil Semua Item Transaksi POS
       const posItems = await req.db("transaction_items as ti")
@@ -452,7 +452,7 @@ const ReportController = {
         .where("t.store_id", store_id)
         .whereRaw(`${dateFilter('t.created_at')} >= ? AND ${dateFilter('t.created_at')} <= ?`, [start, end])
         .select(
-          req.db.raw(`DATE_FORMAT(CONVERT_TZ(t.created_at, '+00:00', '${timezone}'), '%Y-%m-%d %H:%i:%s') as date`),
+          req.db.raw("DATE_FORMAT(t.created_at, '%Y-%m-%d %H:%i:%s') as date"),
           req.db.raw("'POS' as source"),
           "ti.product_name as name",
           "ti.sku as type",
