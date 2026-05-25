@@ -59,4 +59,12 @@ router.get(
   ReportController.periodicReport
 );
 
+// Detail penjualan (POS + PPOB) untuk export
+router.get(
+  '/:store_id/reports/sales-details',
+  authMiddleware(['owner', 'admin']),
+  tenantResolver,
+  ReportController.detailedSalesReport
+);
+
 module.exports = router;

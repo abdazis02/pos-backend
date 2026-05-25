@@ -435,6 +435,65 @@ const ReportController = {
       return response.error(res, err, 'Gagal mengambil laporan periodik');
     }
   },
+
+  async detailedSalesReport(req, res) {
+    try {
+      const { store_id } = req.params;
+      const { start, end } = req.query;
+
+      if (!start || !end) {
+        return response.badRequest(res, 'Range tanggal wajib diisi');
+      }
+
+      // 1. Ambil Semua Item Transaksi POS
+      const posItems = await req.db("transaction_items as ti")
+        .join("transactions as t", "t.id", "ti.transaction_id")
+        .where("t.store_id", store_id)
+        .whereRaw("DATE(t.created_at) >= ? AND DATE(t.created_at) <= ?", [start, end])
+        .select(
+          req.db.raw("DATE_FORMAT(t.created_at, '%Y-%m-%d %H:%i:%s') as date"),
+          req.db.raw("'POS' as source"),
+          "ti.product_name as name",
+          "ti.sku as type",
+          "ti.qty",
+          "ti.price",
+          "ti.subtotal as total",
+          req.db.raw("(ti.price - ti.cost_price) * ti.qty as profit"),
+          "t.payment_method"
+        )
+        .orderBy("t.created_at", "desc");
+
+      // 2. Ambil Semua Order PPOB
+      let ppobItems = [];
+      try {
+        const hasPpob = await req.db.schema.hasTable('ppob_orders');
+        if (hasPpob) {
+          ppobItems = await req.db("ppob_orders")
+            .where({ store_id, status: 'success' })
+            .whereRaw("DATE(created_at) >= ? AND DATE(created_at) <= ?", [start, end])
+            .select(
+              req.db.raw("DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') as date"),
+              req.db.raw("'PPOB' as source"),
+              "product_name as name",
+              "buyer_sku_code as type",
+              req.db.raw("1 as qty"),
+              req.db.raw("sale_price as price"),
+              "sale_price as total",
+              req.db.raw("sale_price - price as profit"),
+              req.db.raw("'saldo' as payment_method")
+            )
+            .orderBy("created_at", "desc");
+        }
+      } catch (e) {}
+
+      const combined = [...posItems, ...ppobItems].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      return response.success(res, combined);
+    } catch (error) {
+      console.error("❌ Detailed Sales Error:", error);
+      return response.error(res, error, 'Gagal mengambil data detail penjualan');
+    }
+  }
 };
 
 module.exports = ReportController;
