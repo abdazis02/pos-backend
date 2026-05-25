@@ -147,14 +147,15 @@ exports.updateClient = async (req, res) => {
 
 exports.getDashboardStats = async (req, res) => {
   try {
-    // 1. Dapatkan Statistik Mitra
-    const owners = await master("owners").select('*');
+    // 1. Dapatkan Statistik Mitra & Saldo (Gunakan SUM agar lebih akurat)
+    const owners = await master("owners").select('status', 'wallet_balance');
+    const saldoRow = await master("owners").sum('wallet_balance as total').first();
+
     let aktif = 0, suspend = 0, blokir = 0;
-    let saldoMitra = 0;
+    let saldoMitra = parseFloat(saldoRow?.total || 0);
 
     owners.forEach(c => {
-      saldoMitra += parseFloat(c.wallet_balance || 0);
-      const statusLower = String(c.status).toLowerCase();
+      const statusLower = String(c.status || '').toLowerCase();
       if (statusLower === 'active' || statusLower === 'aktif') aktif++;
       else if (statusLower === 'suspended' || statusLower === 'suspend') suspend++;
       else blokir++;
