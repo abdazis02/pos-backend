@@ -53,7 +53,9 @@ const UserController = {
       const hashed = await bcrypt.hash(password, 10);
       await UserModel.create({
         tenant_id, store_id, name, email, is_active: safeIsActive, password: hashed, role: safeRole,
-        commission_rate: commission_rate || 0
+        commission_rate: commission_rate || 0,
+        // 🔥 Karyawan mengikuti kategori bisnis TOKO-nya (bukan default 'lainnya')
+        business_category: store.business_category || 'lainnya'
       });
 
       // Logging aktivitas: tambah user

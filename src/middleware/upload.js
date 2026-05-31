@@ -4,7 +4,8 @@ const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
-  limits: { fileSize: 2 * 1024 * 1024 },
+  // Foto galeri HP modern sering 2–8MB; batas 2MB lama menyebabkan upload logo/foto retur gagal.
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter(req, file, cb) {
     // Catatan: dengan memoryStorage, file.buffer BELUM terisi saat fileFilter dipanggil,
     // sehingga validasi magic-byte (file-type) tidak pernah berjalan di sini.

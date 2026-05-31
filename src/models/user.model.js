@@ -48,9 +48,12 @@ const UserModel = {
     },
 
     // Create user (tenant)
-    async create({ tenant_id, store_id, name, email, is_active, password, role, commission_rate }) {
+    async create({ tenant_id, store_id, name, email, is_active, password, role, commission_rate, business_category }) {
         const verified_at = master.fn.now() // TODO: jangan langsung verifikasi, tapi kirim email dulu
-        const [id] = await master("users").insert({ tenant_id, store_id, name, email, is_active, password, role, verified_at, commission_rate })
+        const insertData = { tenant_id, store_id, name, email, is_active, password, role, verified_at, commission_rate }
+        // Hanya set bila ada; kalau kosong biarkan default kolom ('lainnya').
+        if (business_category) insertData.business_category = business_category
+        const [id] = await master("users").insert(insertData)
         return id;
     },
 

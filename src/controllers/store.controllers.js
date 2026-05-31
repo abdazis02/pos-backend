@@ -102,6 +102,7 @@ const StoreController = {
 
       const updateData = {};
       if (!!value.name) updateData.name = value.name;
+      if (!!value.business_category) updateData.business_category = value.business_category;
       if (!!value.address) updateData.address = value.address;
       if (!!value.phone) updateData.phone = value.phone;
       if (!!value.tax_percentage) updateData.tax_percentage = value.tax_percentage;

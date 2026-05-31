@@ -7,9 +7,11 @@ const ProductReturnModel = {
 
   // Get all returns for a store with pagination
   paginateReturns(db, store_id, offset, limit, filters = {}) {
+    // LEFT JOIN agar retur tetap tampil walau produk/user-nya tak ter-resolve
+    // (mis. produk dihapus / user lintas-DB) — sebelumnya INNER JOIN menyembunyikannya.
     const returns = db("product_returns as pr")
-      .join("products as p", "p.id", "pr.product_id")
-      .join(process.env.DB_NAME + ".users as u", "u.id", "pr.user_id")
+      .leftJoin("products as p", "p.id", "pr.product_id")
+      .leftJoin(process.env.DB_NAME + ".users as u", "u.id", "pr.user_id")
       .where("pr.store_id", store_id)
       .orderBy("pr.created_at", "DESC")
       .select(
@@ -42,8 +44,8 @@ const ProductReturnModel = {
   // Get return by ID
   findById(db, store_id, id) {
     return db("product_returns as pr")
-      .join("products as p", "p.id", "pr.product_id")
-      .join(process.env.DB_NAME + ".users as u", "u.id", "pr.user_id")
+      .leftJoin("products as p", "p.id", "pr.product_id")
+      .leftJoin(process.env.DB_NAME + ".users as u", "u.id", "pr.user_id")
       .where("pr.store_id", store_id)
       .where("pr.id", id)
       .first(
@@ -57,7 +59,7 @@ const ProductReturnModel = {
   // Get returns by product ID
   findByProductId(db, store_id, product_id) {
     return db("product_returns as pr")
-      .join(process.env.DB_NAME + ".users as u", "u.id", "pr.user_id")
+      .leftJoin(process.env.DB_NAME + ".users as u", "u.id", "pr.user_id")
       .where("pr.store_id", store_id)
       .where("pr.product_id", product_id)
       .orderBy("pr.created_at", "DESC")

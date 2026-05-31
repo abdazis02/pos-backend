@@ -21,9 +21,13 @@ const StoreModel = {
   },
 
   async createStore(db, data) {
-    const { name, address, phone, tax_percentage, logo_url } = data;
+    const { name, address, phone, tax_percentage, logo_url, business_category } = data;
 
-    const [id] = await db("stores").insert({ name, address, phone, tax_percentage, logo_url })
+    const insert = { name, address, phone, tax_percentage, logo_url };
+    // Hanya set bila ada; kalau kosong biarkan default kolom ('lainnya').
+    if (business_category) insert.business_category = business_category;
+
+    const [id] = await db("stores").insert(insert)
     return id;
   },
 
