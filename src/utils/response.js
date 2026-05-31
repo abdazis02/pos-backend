@@ -119,21 +119,6 @@ const response = {
             timestamp: new Date().toISOString()
         });
     },
-
-    error: (res, err, message = 'Terjadi kesalahan', status = 500) => {
-        // Pastikan status selalu angka
-        if (typeof status !== 'number') status = 500;
-        return res.status(status).json({
-            success: false,
-            message,
-            timestamp: new Date().toISOString(),
-            error: {
-                name: err?.name || 'Error',
-                message: err?.message || String(err),
-                stack: process.env.NODE_ENV === 'development' ? err?.stack : undefined
-            }
-        });
-    },
 };
 
 module.exports = response;

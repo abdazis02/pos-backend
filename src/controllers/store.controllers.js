@@ -1,8 +1,15 @@
 const response = require('../utils/response');
 const StoreModel = require('../models/store.model');
 const ActivityLogModel = require('../models/activityLog.model');
+const { move, remove } = require('../utils/uploaded_file');
 const { pageValidations } = require('../validations/page.validation');
 const { storeValidations } = require('../validations/store.validation');
+
+// 🔒 Jangan pernah kirim server key (rahasia gateway) ke client.
+function stripStoreSecret(store) {
+  if (store) delete store.midtrans_server_key;
+  return store;
+}
 
 const StoreController = {
   // Get all stores for current owner
@@ -18,6 +25,7 @@ const StoreController = {
         StoreModel.paginateStores(req.db, offset, value.itemsPerPage, value.q)
       );
 
+      stores.forEach(stripStoreSecret);
       return response.success(res, {
         items: stores,
         total: total.cnt,
@@ -53,7 +61,7 @@ const StoreController = {
       const store = await StoreModel.findStoreById(req.db, storeId);
       if (!store) return response.error(res, 'Gagal membuat toko');
 
-      return response.created(res, store, 'Toko berhasil dibuat');
+      return response.created(res, stripStoreSecret(store), 'Toko berhasil dibuat');
     } catch (error) {
       return response.error(res, error, 'Terjadi kesalahan saat membuat toko');
     }
@@ -67,7 +75,7 @@ const StoreController = {
       const store = await StoreModel.findStoreById(req.db, id);
       if (!store) return response.notFound(res, 'Toko tidak ditemukan');
 
-      return response.success(res, store, 'Data toko berhasil diambil');
+      return response.success(res, stripStoreSecret(store), 'Data toko berhasil diambil');
     } catch (error) {
       console.error('Get store by ID error:', error);
       return response.error(res, error, 'Terjadi kesalahan saat mengambil data toko');
@@ -123,7 +131,7 @@ const StoreController = {
         remove(storeExists.logo_url);
       }
 
-      return response.success(res, updatedStore, 'Toko berhasil diupdate');
+      return response.success(res, stripStoreSecret(updatedStore), 'Toko berhasil diupdate');
     } catch (error) {
       console.error('Update store error:', error);
       if (error.code === 'ER_DUP_ENTRY') {

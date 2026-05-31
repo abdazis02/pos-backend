@@ -10,7 +10,7 @@ const fs = require('fs');
 
 // PENTING: Ganti path ini ke folder "downloads" di frontend (Nginx) Anda!
 // Misalnya jika frontend Nginx diarahkan ke /var/www/adminpos/dist
-const uploadDir = '/var/www/adminpos.kamunara.com/dist/downloads'; 
+const uploadDir = '/var/www/adminpos/downloads'; 
 
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -22,7 +22,8 @@ const storage = multer.diskStorage({
   },
   filename: function (req, file, cb) {
     const type = req.body.type;
-    let fileName = file.originalname;
+    // 🔒 Sanitasi nama file (cegah path traversal seperti "../../..") — ambil basename saja.
+    let fileName = path.basename(file.originalname || 'upload');
     // Mengubah nama file agar sesuai dengan link di Login.tsx
     if (type === 'apk') fileName = 'Pipos.apk';
     if (type === 'exe') fileName = 'Pipos.exe';

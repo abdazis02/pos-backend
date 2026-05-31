@@ -13,7 +13,7 @@ const TransactionModel = {
     if (!!filters.search) {
       const k = `%${filters.search}%`
       transactions.where(q => q
-        .where("id", "like", k)
+        .where("t.id", "like", k)
         .orWhereExists(
           db("transaction_items as ti")
             .leftJoin("products as p", "p.id", "ti.product_id")

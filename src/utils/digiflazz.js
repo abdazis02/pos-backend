@@ -50,6 +50,12 @@ function sendDigiflazzRequest(path, payload) {
       });
     });
 
+    // ⏱️ Timeout agar request tidak menggantung selamanya (mis. Digiflazz lambat/hang).
+    // Penting karena pemanggilan ini bisa terjadi di dalam transaksi DB yang mengunci saldo.
+    req.setTimeout(30000, () => {
+      req.destroy(new Error('Digiflazz request timeout (30s)'));
+    });
+
     req.on('error', reject);
     req.write(data);
     req.end();

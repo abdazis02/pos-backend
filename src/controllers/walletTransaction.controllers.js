@@ -155,32 +155,37 @@ const WalletTopupController = {
     const trx = await master.transaction()
     try {
       const wallet = await WalletModel.findWalletTopupByMidtransId(transaction_id);
-      if (!wallet) return response.notFound(res, 'Transaction not found!');
+      if (!wallet) { await trx.rollback(); return response.notFound(res, 'Transaction not found!'); }
+
+      // 🔒 Idempoten: jangan proses ulang topup yang sudah sukses (cegah saldo dobel saat retry callback)
+      if (wallet.status === 'success') { await trx.rollback(); return res.sendStatus(200); }
 
       const status = fraud_status == 'accept' ? 'success' : 'failed';
       const isUpdated = await WalletModel.updateWallet(trx, wallet.id, {
         status,
         paid_at: master.fn.now()
       });
-      if (!isUpdated) return response.error(res, null, 'Gagal mengupdate transaksi');
+      if (!isUpdated) { await trx.rollback(); return response.error(res, null, 'Gagal mengupdate transaksi'); }
 
-      const owner = await trx("owners as o")
-        .forUpdate()
-        .where('o.id', wallet.owner_id)
-        .first('o.wallet_balance')
+      // 💰 Tambah saldo HANYA bila pembayaran benar-benar sukses (bukan saat fraud ditolak)
+      if (status === 'success') {
+        const owner = await trx("owners as o")
+          .forUpdate()
+          .where('o.id', wallet.owner_id)
+          .first('o.wallet_balance')
 
-      const data = {
-        owner_id: wallet.owner_id,
-        type: 'topup',
-        amount: wallet.amount,
-        balance_after: owner.wallet_balance + wallet.amount,
-        reference_type: 'wallet_topups',
-        reference_id: wallet.id,
-        description: `Topup saldo lewat ${wallet.payment_method}`
-      };
+        await WalletTransaction.createTransaction(trx, {
+          owner_id: wallet.owner_id,
+          type: 'topup',
+          amount: wallet.amount,
+          balance_after: parseFloat(owner.wallet_balance || 0) + parseFloat(wallet.amount || 0),
+          reference_type: 'wallet_topups',
+          reference_id: wallet.id,
+          description: `Topup saldo lewat ${wallet.payment_method}`
+        });
 
-      await WalletTransaction.createTransaction(trx, data);
-      await OwnerModel.addBalance(trx, wallet.owner_id, wallet.amount)
+        await OwnerModel.addBalance(trx, wallet.owner_id, wallet.amount)
+      }
 
       getIO().to(transaction_id).emit('payment-success', {
         message: "Pembayaran Lunas!",

@@ -25,8 +25,14 @@ const UserController = {
   async create(req, res) {
     try {
       const { store_id } = req.params;
-      const { name, email, password, role, commission_rate } = req.body;
-      const { tenant_id, role: user_role, is_active } = req.user;
+      const { name, email, password, role, commission_rate, is_active } = req.body;
+      const { tenant_id, role: user_role } = req.user;
+
+      // 🔒 Hanya owner yang boleh set role, dan hanya dalam allowlist
+      // (cegah eskalasi membuat akun superadmin/owner)
+      const ALLOWED_ROLES = ['admin', 'cashier'];
+      const safeRole = (user_role === 'owner' && ALLOWED_ROLES.includes(role)) ? role : 'cashier';
+      const safeIsActive = (is_active === undefined || is_active === null) ? 1 : (is_active ? 1 : 0);
 
       // validasi unique email
       const user = await master("users").where("email", email).first();
@@ -46,7 +52,7 @@ const UserController = {
 
       const hashed = await bcrypt.hash(password, 10);
       await UserModel.create({
-        tenant_id, store_id, name, email, is_active, password: hashed, role: user_role == 'owner' ? role : 'cashier',
+        tenant_id, store_id, name, email, is_active: safeIsActive, password: hashed, role: safeRole,
         commission_rate: commission_rate || 0
       });
 
@@ -84,10 +90,12 @@ const UserController = {
         }
       }
 
+      // 🔒 role hanya boleh diubah ke allowlist (cegah eskalasi ke superadmin/owner)
+      const ALLOWED_ROLES = ['admin', 'cashier'];
       let updateData = {};
       if (name !== undefined) updateData.name = name;
       if (email !== undefined) updateData.email = email;
-      if (role !== undefined) updateData.role = role;
+      if (role !== undefined && ALLOWED_ROLES.includes(role)) updateData.role = role;
       if (is_active !== undefined) updateData.is_active = is_active;
       if (commission_rate !== undefined) updateData.commission_rate = commission_rate;
       if (password) updateData.password = await bcrypt.hash(password, 10);

@@ -584,10 +584,13 @@ const TransactionController = {
         refunded_at: trxTenant.fn.now()
       });
 
-      // Restore product stock
+      // Restore product stock (cek without_stock dari tabel produk, bukan dari item transaksi
+      // yang tidak punya kolom tersebut)
       for (const refundItem of refund_items) {
-        const product = originalItemMap[refundItem.product_id];
-        if (!product.without_stock) {
+        const prod = await trxTenant('products')
+          .where({ store_id, id: refundItem.product_id })
+          .first('without_stock');
+        if (!prod || !prod.without_stock) {
           await TransactionModel.addProductStock(trxTenant, store_id, refundItem.product_id, refundItem.qty);
         }
       }

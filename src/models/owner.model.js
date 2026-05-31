@@ -34,7 +34,8 @@ const OwnerModel = {
   },
 
   subtractBalance(trx, id, fee) {
-    return trx("owners").where({ id }).decrement("wallet_balance", fee)
+    // 🔒 Cegah saldo jadi negatif (defensif; pemanggil tetap wajib cek saldo + forUpdate dulu)
+    return trx("owners").where({ id }).where('wallet_balance', '>=', fee).decrement("wallet_balance", fee)
   },
 
   updateById(id, data) {

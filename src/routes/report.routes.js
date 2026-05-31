@@ -3,12 +3,14 @@ const router = express.Router();
 const ReportController = require('../controllers/report.controllers');
 const authMiddleware = require('../middleware/auth');
 const tenantResolver = require('../middleware/tenantResolver');
+const checkStore = require('../middleware/checkStore');
 
 // Summary laporan keuangan
 router.get(
   '/:store_id/reports/summary',
   authMiddleware(['owner', 'admin']),
   tenantResolver,
+  checkStore,
   ReportController.summary
 );
 
@@ -17,6 +19,7 @@ router.get(
   '/:store_id/reports/products',
   authMiddleware(['owner', 'admin']),
   tenantResolver,
+  checkStore,
   ReportController.products
 );
 
@@ -24,6 +27,7 @@ router.get(
   '/:store_id/reports/cashiers',
   authMiddleware(['owner', 'admin']),
   tenantResolver,
+  checkStore,
   ReportController.cashiers
 );
 
@@ -32,6 +36,7 @@ router.post(
   '/:store_id/reports/daily/generate',
   authMiddleware(['owner', 'admin']),
   tenantResolver,
+  checkStore,
   ReportController.generateDailyReport
 );
 
@@ -40,6 +45,7 @@ router.get(
   '/:store_id/reports/daily',
   authMiddleware(['owner', 'admin']),
   tenantResolver,
+  checkStore,
   ReportController.getDailyReport
 );
 
@@ -48,6 +54,7 @@ router.get(
   '/:store_id/reports/daily/list',
   authMiddleware(['owner', 'admin']),
   tenantResolver,
+  checkStore,
   ReportController.listDailyReports
 );
 
@@ -56,6 +63,7 @@ router.get(
   '/:store_id/reports/periodic',
   authMiddleware(['owner', 'admin']),
   tenantResolver,
+  checkStore,
   ReportController.periodicReport
 );
 
@@ -64,6 +72,7 @@ router.get(
   '/:store_id/reports/sales-details',
   authMiddleware(['owner', 'admin']),
   tenantResolver,
+  checkStore,
   ReportController.detailedSalesReport
 );
 

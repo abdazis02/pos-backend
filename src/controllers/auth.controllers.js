@@ -40,6 +40,13 @@ const AuthController = {
       const tenant = await OwnerModel.getTenantByID(user.tenant_id);
 
       if (user.role != 'superadmin' && user.role != 'superadmin2') {
+        // 🔒 Blokir login bila mitra/owner berstatus 'suspended'. NULL/active/lainnya tetap lolos
+        // (hanya status 'suspended' eksplisit yang ditolak, agar tidak mengunci akun yang sah).
+        const ownerRow = await OwnerModel.getByTenantId(user.tenant_id);
+        if (ownerRow && String(ownerRow.status || '').toLowerCase() === 'suspended') {
+          return response.error(res, null, 'Akun mitra Anda sedang dinonaktifkan. Silakan hubungi admin PIPos.', 403);
+        }
+
         const tenant_db = getTenantConnection(tenant);
 
         /* ================= DATA TAMBAHAN ================= */

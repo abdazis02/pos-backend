@@ -166,14 +166,19 @@ const ProductReturnController = {
         return response.badRequest(res, 'Return sudah diproses sebelumnya');
       }
 
+      // Jika approved, kurangi stok DULU (atomik). Batalkan bila stok tak cukup,
+      // agar status tidak terlanjur 'approved' padahal stok gagal dikurangi.
+      if (status === 'approved') {
+        const ok = await ProductModel.subProductStock(req.db, store_id, returnData.product_id, returnData.quantity);
+        if (!ok) {
+          return response.badRequest(res, 'Stok produk tidak mencukupi untuk menyetujui retur ini');
+        }
+      }
+
       // Update status
       await ProductReturnModel.updateStatus(req.db, store_id, id, status);
 
-      // If approved, reduce product stock
       if (status === 'approved') {
-        await ProductModel.subProductStock(req.db, store_id, returnData.product_id, returnData.quantity);
-
-        // Log activity
         await ActivityLogModel.create(req.db, {
           user_id: req.user.id,
           store_id,
@@ -181,7 +186,6 @@ const ProductReturnController = {
           detail: `Menyetujui return produk ${returnData.product_name} sebanyak ${returnData.quantity} pcs`
         });
       } else if (status === 'rejected') {
-        // Log activity
         await ActivityLogModel.create(req.db, {
           user_id: req.user.id,
           store_id,
@@ -215,9 +219,14 @@ const ProductReturnController = {
         return response.badRequest(res, 'Hanya return dengan status pending yang dapat dihapus');
       }
 
-      // Remove photos if exists
+      // Remove photos if exists (kolom 'photos' disimpan sebagai JSON string)
       if (returnData.photos) {
-        photos.forEach(photo => remove(photo));
+        try {
+          const photoList = Array.isArray(returnData.photos)
+            ? returnData.photos
+            : JSON.parse(returnData.photos);
+          if (Array.isArray(photoList)) photoList.forEach(photo => remove(photo));
+        } catch (_) { /* abaikan jika format foto tidak valid */ }
       }
 
       await ProductReturnModel.delete(req.db, store_id, id);

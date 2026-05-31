@@ -8,6 +8,15 @@ const { startPpobSyncJob } = require('./jobs/ppobSync.job');
 
 const PORT = process.env.PORT || 5000;
 
+// 🛡️ Cegah 1 error async yang tidak tertangani menjatuhkan proses (yang melayani SEMUA tenant).
+// Cukup catat; jangan exit agar layanan tetap hidup. Pantau log untuk akar masalahnya.
+process.on('unhandledRejection', (reason) => {
+  console.error('⚠️ [unhandledRejection]', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ [uncaughtException]', err);
+});
+
 // Start server
 server.listen(PORT, async () => {
     for (const tenant of await master("tenants").select('*')) {

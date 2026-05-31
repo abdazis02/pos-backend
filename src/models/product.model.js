@@ -104,8 +104,12 @@ const ProductModel = {
   // Bulk update
   async bulkUpdate(connOrStoreId, maybeStoreId, productIds, updateData) {
     const hasConn = connOrStoreId && typeof connOrStoreId.execute === 'function';
-    const db = hasConn ? connOrStoreId : pool;
-    const storeId = hasConn ? maybeStoreId : connOrStoreId;
+    if (!hasConn) {
+      // Sebelumnya merujuk variabel `pool` yang tidak terdefinisi → ReferenceError.
+      throw new Error('bulkUpdate membutuhkan koneksi DB (mysql2) sebagai argumen pertama');
+    }
+    const db = connOrStoreId;
+    const storeId = maybeStoreId;
     if (!Array.isArray(productIds) || productIds.length === 0) throw new Error('Product IDs must be a non-empty array');
     try {
       const fields = [];

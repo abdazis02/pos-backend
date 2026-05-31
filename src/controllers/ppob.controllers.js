@@ -37,7 +37,8 @@ function getDigiflazzWebhookSecret() {
 }
 
 function verifyDigiflazzWebhook(req, body) {
-  const signatureHeader = req.headers['x-digiflazz-signature'];
+  // Digiflazz umumnya pakai header 'x-hub-signature' (format: "sha1=<hex>")
+  let signatureHeader = req.headers['x-hub-signature'] || req.headers['x-digiflazz-signature'];
   if (!signatureHeader) {
     console.warn('⚠️ Webhook tanpa header signature, diproses tanpa verifikasi...');
     return true;
@@ -50,19 +51,67 @@ function verifyDigiflazzWebhook(req, body) {
   }
 
   const crypto = require('crypto');
-  const rawBody = typeof body === 'string' ? body : JSON.stringify(body);
+  // HMAC harus atas RAW body (bukan hasil re-stringify yang byte-nya bisa berbeda)
+  const rawBody = Buffer.isBuffer(body)
+    ? body.toString('utf-8')
+    : (typeof body === 'string' ? body : JSON.stringify(body));
 
-  const sig256 = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-  if (signatureHeader === sig256) return true;
+  // Header bisa berformat "sha1=<hex>"
+  let algo = null;
+  if (signatureHeader.includes('=')) {
+    const parts = signatureHeader.split('=');
+    algo = parts[0].toLowerCase();
+    signatureHeader = parts[1];
+  }
+  const algos = (algo && ['sha256', 'sha1', 'md5'].includes(algo)) ? [algo] : ['sha256', 'sha1', 'md5'];
+  for (const a of algos) {
+    const h = crypto.createHmac(a, secret).update(rawBody).digest('hex');
+    if (signatureHeader === h) return true;
+  }
 
-  const sig1 = crypto.createHmac('sha1', secret).update(rawBody).digest('hex');
-  if (signatureHeader === sig1) return true;
-
-  const sigMd5 = crypto.createHmac('md5', secret).update(rawBody).digest('hex');
-  if (signatureHeader === sigMd5) return true;
-
-  console.error(`❌ Signature tidak cocok! Got: ${signatureHeader}`);
+  console.error(`❌ Signature webhook tidak cocok! Got: ${signatureHeader}`);
   return false;
+}
+
+// 🔁 Refund saldo owner untuk order PPOB gagal. Idempoten: lock baris saldo owner +
+// cek apakah refund sudah pernah dicatat untuk order tsb.
+async function refundPpobOrder(tenant_id, order_id, ref_id) {
+  const owner = await OwnerModel.getByTenantId(tenant_id);
+  if (!owner) return;
+
+  const trx = await master.transaction();
+  try {
+    const before = await OwnerModel.getBalanceByTenant(trx, tenant_id); // forUpdate lock
+
+    const existingRefund = await trx('wallet_transactions')
+      .where({ reference_type: 'ppob_orders', reference_id: order_id, type: 'ppob_refund' })
+      .first();
+    if (existingRefund) { await trx.rollback(); return; }
+
+    const deductions = await trx('wallet_transactions')
+      .where({ reference_type: 'ppob_orders', reference_id: order_id })
+      .whereIn('type', ['ppob_purchase', 'transaction_fee'])
+      .sum({ total: 'amount' })
+      .first();
+    const refundAmount = Math.abs(parseFloat(deductions?.total || 0));
+    if (refundAmount <= 0) { await trx.rollback(); return; }
+
+    await OwnerModel.addBalance(trx, owner.id, refundAmount);
+    await WalletTransaction.createTransaction(trx, {
+      owner_id: owner.id,
+      type: 'ppob_refund',
+      amount: refundAmount,
+      balance_after: parseFloat(before || 0) + refundAmount,
+      reference_type: 'ppob_orders',
+      reference_id: order_id,
+      description: `Refund PPOB gagal (ref ${ref_id})`,
+    });
+    await trx.commit();
+    console.log(`💸 Refund PPOB ${ref_id}: +${refundAmount} ke owner ${owner.id}`);
+  } catch (e) {
+    await trx.rollback();
+    console.error(`❌ Gagal refund PPOB ${ref_id}:`, e.message);
+  }
 }
 
 const listSchema = Joi.object({
@@ -268,6 +317,12 @@ const PPOBController = {
     }
 
     try {
+      // 🔒 Verifikasi signature (opt-in; aktifkan via DIGIFLAZZ_VERIFY_WEBHOOK=true setelah
+      // memastikan DIGIFLAZZ_WEBHOOK_SECRET sama dengan yang di dashboard Digiflazz).
+      if (process.env.DIGIFLAZZ_VERIFY_WEBHOOK === 'true' && !verifyDigiflazzWebhook(req, req.body)) {
+        return response.unauthorized(res, 'Signature webhook tidak valid');
+      }
+
       const data = payload.data || payload;
       const { ref_id, rc, sn, status } = data;
 
@@ -300,6 +355,9 @@ const PPOBController = {
 
       const finalSn = sn || (statusLower === 'sukses' ? data.message : '');
 
+      // Ambil status lama dulu (untuk refund idempoten saat transisi pending -> failed)
+      const prevOrder = await tenantDb('ppob_orders').where('ref_id', ref_id).first();
+
       await tenantDb('ppob_orders')
         .where('ref_id', ref_id)
         .update({
@@ -308,6 +366,11 @@ const PPOBController = {
           response: JSON.stringify(data),
           updated_at: new Date()
         });
+
+      // 🔁 Refund saldo bila transaksi gagal (hanya saat transisi dari pending)
+      if (normalizedStatus === 'failed' && prevOrder && prevOrder.status === 'pending') {
+        await refundPpobOrder(parsed.tenant_id, prevOrder.id, ref_id);
+      }
 
       console.log(`✅ PPOB Ref ${ref_id} otomatis diupdate ke: ${normalizedStatus}`);
       return response.success(res, null, 'Webhook Berhasil');
@@ -482,6 +545,7 @@ const PPOBController = {
           }
 
           if (newStatus !== order.status) {
+            const prevStatus = order.status;
             await req.db('ppob_orders')
               .where('ref_id', ref_id)
               .update({
@@ -489,7 +553,11 @@ const PPOBController = {
                 sn: digiData?.sn || order.sn || '',
                 updated_at: new Date(),
               });
-            console.log(`✅ [AutoCheck] Order ${ref_id} updated: ${order.status} → ${newStatus}`);
+            // 🔁 Refund jika gagal (transisi dari pending)
+            if (newStatus === 'failed' && prevStatus === 'pending') {
+              await refundPpobOrder(req.user.tenant_id, order.id, ref_id);
+            }
+            console.log(`✅ [AutoCheck] Order ${ref_id} updated: ${prevStatus} → ${newStatus}`);
             order = await PPOBOrderModel.findOrderByRefId(req.db, store_id, ref_id);
           }
         } catch (checkErr) {
@@ -530,6 +598,7 @@ const PPOBController = {
         newStatus = 'failed';
       }
 
+      const prevStatus = order.status;
       await req.db('ppob_orders')
         .where('ref_id', ref_id)
         .update({
@@ -537,6 +606,11 @@ const PPOBController = {
           sn: digiData?.sn || order.sn || '',
           updated_at: new Date(),
         });
+
+      // 🔁 Refund jika gagal (transisi dari pending)
+      if (newStatus === 'failed' && prevStatus === 'pending') {
+        await refundPpobOrder(req.user.tenant_id, order.id, ref_id);
+      }
 
       const updatedOrder = await PPOBOrderModel.findOrderByRefId(req.db, store_id, ref_id);
       console.log(`🔄 [ManualCheck] Order ${ref_id} result: ${newStatus} (rc=${rc})`);

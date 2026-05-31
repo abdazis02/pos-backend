@@ -1,10 +1,16 @@
 const ActivityLogModel = require('../models/activityLog.model');
 const archiver = require('archiver');
+const bcrypt = require('bcryptjs');
 const ExcelJS = require('exceljs');
 const master = require('../config/knexMaster');
 const XLSX = require('xlsx');
 const { Parser } = require('json2csv');
 const { parse } = require('csv-parse/sync');
+
+// 🔒 Jangan ikutkan kolom password (hash) ke file export.
+function stripUserSecrets(users) {
+  return (users || []).map(({ password, ...rest }) => rest);
+}
 
 function toMySQLDatetime(dt) {
   if (!dt) return null;
@@ -69,48 +75,59 @@ exports.exportData = async (req, res) => {
     // Multi-data support
     const dataList = dataParam.split(',').map(x => x.trim()).filter(Boolean);
 
-    // Helper untuk filter tanggal
-    function buildDateFilter(field) {
-      if (startDate && endDate) return `WHERE ${field} BETWEEN '${startDate} 00:00:00' AND '${endDate} 23:59:59'`;
-      if (startDate) return `WHERE ${field} >= '${startDate} 00:00:00'`;
-      if (endDate) return `WHERE ${field} <= '${endDate} 23:59:59'`;
-      return '';
+    // Helper filter tanggal — TERPARAMETER (cegah SQL injection).
+    // `field` adalah nama kolom konstanta dari kode, bukan input user.
+    function dateClause(field) {
+      if (startDate && endDate) return { sql: ` AND ${field} BETWEEN :start AND :end`, binds: { start: `${startDate} 00:00:00`, end: `${endDate} 23:59:59` } };
+      if (startDate) return { sql: ` AND ${field} >= :start`, binds: { start: `${startDate} 00:00:00` } };
+      if (endDate) return { sql: ` AND ${field} <= :end`, binds: { end: `${endDate} 23:59:59` } };
+      return { sql: '', binds: {} };
     }
+
+    const tenant_id = req.user.tenant_id;
+    const store_id = req.user.store_id;
+    // transaction_items tidak punya kolom store_id → ambil via JOIN ke transactions
+    const itemsByStore = () => req.db.raw(
+      `SELECT ti.* FROM transaction_items ti JOIN transactions t ON t.id = ti.transaction_id WHERE t.store_id = :store_id`,
+      { store_id }
+    );
 
     // Mapping kategori ke query
     const dataMap = {
       'karyawan': async () => {
-        const [users] = await req.db.raw(`SELECT * FROM ${process.env.DB_NAME}.users WHERE role != "owner" AND tenant_id = ${req.user.tenant_id} AND store_id = :store_id`, { store_id: req.user.store_id });
-        return { users };
+        const [users] = await req.db.raw(`SELECT * FROM \`${process.env.DB_NAME}\`.users WHERE role != 'owner' AND tenant_id = :tenant_id AND store_id = :store_id`, { tenant_id, store_id });
+        return { users: stripUserSecrets(users) };
       },
       'users': async () => {
-        const [users] = await req.db.raw(`SELECT * FROM ${process.env.DB_NAME}.users WHERE role != "owner" AND tenant_id = ${req.user.tenant_id} AND store_id = :store_id`, { store_id: req.user.store_id });
-        return { users };
+        const [users] = await req.db.raw(`SELECT * FROM \`${process.env.DB_NAME}\`.users WHERE role != 'owner' AND tenant_id = :tenant_id AND store_id = :store_id`, { tenant_id, store_id });
+        return { users: stripUserSecrets(users) };
       },
       'produk': async () => {
-        const [products] = await req.db.raw('SELECT * FROM products WHERE store_id = :store_id', { store_id: req.user.store_id });
+        const [products] = await req.db.raw('SELECT * FROM products WHERE store_id = :store_id', { store_id });
         return { products };
       },
       'products': async () => {
-        const [products] = await req.db.raw('SELECT * FROM products WHERE store_id = :store_id', { store_id: req.user.store_id });
+        const [products] = await req.db.raw('SELECT * FROM products WHERE store_id = :store_id', { store_id });
         return { products };
       },
       'transaksi': async () => {
-        const [transactions] = await req.db.raw(`SELECT * FROM transactions ${buildDateFilter('created_at')} AND store_id = :store_id`, { store_id: req.user.store_id });
-        const [transaction_items] = await req.db.raw(`SELECT * FROM transaction_items WHERE store_id = :store_id`, { store_id: req.user.store_id });
+        const dc = dateClause('created_at');
+        const [transactions] = await req.db.raw(`SELECT * FROM transactions WHERE store_id = :store_id${dc.sql}`, { store_id, ...dc.binds });
+        const [transaction_items] = await itemsByStore();
         return { transactions, transaction_items };
       },
       'transactions': async () => {
-        const [transactions] = await req.db.raw(`SELECT * FROM transactions ${buildDateFilter('created_at')} AND store_id = :store_id`, { store_id: req.user.store_id });
-        const [transaction_items] = await req.db.raw(`SELECT * FROM transaction_items WHERE store_id = :store_id`, { store_id: req.user.store_id });
+        const dc = dateClause('created_at');
+        const [transactions] = await req.db.raw(`SELECT * FROM transactions WHERE store_id = :store_id${dc.sql}`, { store_id, ...dc.binds });
+        const [transaction_items] = await itemsByStore();
         return { transactions, transaction_items };
       },
       'item_transaksi': async () => {
-        const [transaction_items] = await req.db.raw('SELECT * FROM transaction_items WHERE store_id = :store_id', { store_id: req.user.store_id });
+        const [transaction_items] = await itemsByStore();
         return { transaction_items };
       },
       'transaction_items': async () => {
-        const [transaction_items] = await req.db.raw('SELECT * FROM transaction_items WHERE store_id = :store_id', { store_id: req.user.store_id });
+        const [transaction_items] = await itemsByStore();
         return { transaction_items };
       },
       // 'pelanggan': async () => {
@@ -130,11 +147,12 @@ exports.exportData = async (req, res) => {
 
     if (dataParam === 'all') {
       // Semua data
-      const [users] = await req.db.raw(`SELECT * FROM ${process.env.DB_NAME}.users WHERE tenant_id = ${req.user.tenant_id} WHERE store_id = :store_id`, { store_id: req.user.store_id });
-      const [products] = await req.db.raw('SELECT * FROM products WHERE store_id = :store_id', { store_id: req.user.store_id });
-      const [transactions] = await req.db.raw(`SELECT * FROM transactions ${buildDateFilter('created_at')} AND store_id = :store_id`, { store_id: req.user.store_id });
-      const [transaction_items] = await req.db.raw(`SELECT * FROM transaction_items WHERE store_id = :store_id`, { store_id: req.user.store_id });
-      data = { users, products, transactions, transaction_items };
+      const dc = dateClause('created_at');
+      const [users] = await req.db.raw(`SELECT * FROM \`${process.env.DB_NAME}\`.users WHERE tenant_id = :tenant_id AND store_id = :store_id`, { tenant_id, store_id });
+      const [products] = await req.db.raw('SELECT * FROM products WHERE store_id = :store_id', { store_id });
+      const [transactions] = await req.db.raw(`SELECT * FROM transactions WHERE store_id = :store_id${dc.sql}`, { store_id, ...dc.binds });
+      const [transaction_items] = await itemsByStore();
+      data = { users: stripUserSecrets(users), products, transactions, transaction_items };
     } else if (dataList.length > 1) {
       // Multi-data, hasilkan ZIP
       for (const key of dataList) {
@@ -362,16 +380,30 @@ exports.importData = async (req, res) => {
           continue;
         }
 
-        // Hash password default jika kosong
-        if (!mappedData.password) {
-          mappedData.password = await bcrypt.hash('123456', 10);
+        // 🔒 SELALU hash password (default '123456' bila kosong) — jangan pernah simpan plaintext.
+        const rawPassword = (mappedData.password && String(mappedData.password).trim())
+          ? String(mappedData.password)
+          : '123456';
+        mappedData.password = await bcrypt.hash(rawPassword, 10);
+
+        // 🔒 Batasi role ke allowlist (cegah pembuatan superadmin/owner via import)
+        const ALLOWED_ROLES = ['admin', 'cashier'];
+        const roleLower = String(mappedData.role || '').toLowerCase().trim();
+        const safeRole = ALLOWED_ROLES.includes(roleLower) ? roleLower : 'cashier';
+
+        // 🔒 Cegah tamper lintas-tenant: email unik global, jadi jika email sudah
+        // milik tenant lain, jangan disentuh.
+        const existingUser = await master('users').where('email', mappedData.email).first();
+        if (existingUser && existingUser.tenant_id !== req.user.tenant_id) {
+          console.log(`⚠️ SKIP: Row ${i + 1} email ${mappedData.email} milik tenant lain`);
+          continue;
         }
 
         await master.raw(
           `INSERT INTO users (tenant_id, store_id, name, email, password, role, is_active, created_at, verified_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE name=VALUES(name), role=VALUES(role), is_active=VALUES(is_active)`,
-          [req.user.tenant_id, store_id, mappedData.name, mappedData.email, mappedData.password, mappedData.role || 'cashier', mappedData.is_active ?? 1, new Date(), new Date()]
+           ON DUPLICATE KEY UPDATE name=VALUES(name), is_active=VALUES(is_active)`,
+          [req.user.tenant_id, store_id, mappedData.name, mappedData.email, mappedData.password, safeRole, mappedData.is_active ?? 1, new Date(), new Date()]
         );
         importedCount++;
       } else {
@@ -465,26 +497,42 @@ exports.importData = async (req, res) => {
 };
 
 exports.resetData = async (req, res) => {
-  try {
-    // Hapus semua data, kecuali owner
-    // Urutan penting karena foreign key!
-    await req.db.raw('DELETE FROM transaction_items');
-    await req.db.raw('DELETE FROM transactions');
-    await req.db.raw('DELETE FROM products');
-    await req.db.raw('DELETE FROM users WHERE role != "owner"');
-    // Jika ada tabel lain (misal: categories, struck_receipt), tambahkan juga di sini
+  // 🔒 Reset hanya untuk TOKO AKTIF, bukan seluruh tenant.
+  const store_id = req.body.store_id || req.user.store_id;
+  if (!store_id) {
+    return res.status(400).json({ success: false, message: 'store_id tidak ditemukan' });
+  }
 
-    res.json({ success: true, message: 'Semua data berhasil direset, kecuali data owner.' });
+  const trx = await req.db.transaction();
+  try {
+    // Urutan penting karena foreign key. Hapus item via JOIN agar tidak bergantung
+    // pada keberadaan kolom store_id di transaction_items.
+    await trx.raw(
+      'DELETE ti FROM transaction_items ti JOIN transactions t ON t.id = ti.transaction_id WHERE t.store_id = ?',
+      [store_id]
+    );
+    await trx.raw('DELETE FROM transactions WHERE store_id = ?', [store_id]);
+    await trx.raw('DELETE FROM products WHERE store_id = ?', [store_id]);
+    await trx.commit();
+
+    // Karyawan ada di DB master (bukan DB tenant). Hapus admin/kasir toko ini saja, jangan owner.
+    await master.raw(
+      `DELETE FROM users WHERE tenant_id = ? AND store_id = ? AND role IN ('admin','cashier')`,
+      [req.user.tenant_id, store_id]
+    );
+
+    res.json({ success: true, message: 'Data toko ini berhasil direset (kecuali owner).' });
 
     // Log activity
     await ActivityLogModel.create(req.db, {
       user_id: req.user.id,
-      store_id: req.user.store_id || null,
+      store_id: store_id,
       action: 'reset_data',
-      detail: 'Reset data dilakukan'
+      detail: `Reset data toko ${store_id}`
     });
 
   } catch (error) {
+    await trx.rollback();
     if (!res.headersSent) {
       res.status(500).json({ success: false, message: 'Gagal reset data', error: error.message });
     }

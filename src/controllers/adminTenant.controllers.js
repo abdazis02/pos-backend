@@ -10,7 +10,7 @@ const AdminClientController = {
       const rows = await master("owners as o").leftJoin("tenants as t", "o.id", "t.owner_id").select(master.raw(`
         o.id, o.business_name, o.email, o.phone, o.created_at, o.status AS owner_status,
         o.wallet_balance,
-        t.db_name, t.db_user, t.db_pass
+        t.db_name
       `)).orderBy("o.id", "desc");
       response.success(res, rows);
     } catch (err) {
@@ -95,11 +95,23 @@ const AdminClientController = {
   async update(req, res) {
     const { id } = req.params;
     const { business_name, business_category, email, phone, address } = req.body;
+    const trx = await master.transaction();
     try {
-      await master("owners").where("id", id).update({ business_name, business_category, email, phone, address });
-      await master("users").where({ email: email, role: 'owner' }).update({ business_category });
+      await trx("owners").where("id", id).update({ business_name, business_category, email, phone, address });
+
+      // Sinkronkan ke akun owner di tabel users via tenant (BUKAN via email lama yang bisa berubah)
+      const tenants = await trx("tenants").where('owner_id', id).select('id');
+      const tenantIds = tenants.map(t => t.id);
+      if (tenantIds.length) {
+        const userUpdate = { business_category };
+        if (email) userUpdate.email = email;
+        await trx("users").whereIn('tenant_id', tenantIds).where('role', 'owner').update(userUpdate);
+      }
+
+      await trx.commit();
       response.success(res, null, 'Tenant updated!');
     } catch (err) {
+      await trx.rollback();
       response.error(res, err, err.message, 500);
     }
   },
@@ -108,18 +120,31 @@ const AdminClientController = {
     const { id } = req.params;
     const trx = await master.transaction();
     try {
-      const tenant = await trx("tenants").where('owner_id', id).first();
-      if (!tenant) return response.notFound(res, 'Tenant not found!');
-      await trx("users").where('tenant_id', id).delete();
+      const tenants = await trx("tenants").where('owner_id', id).select('*');
+      if (!tenants.length) {
+        await trx.rollback();
+        return response.notFound(res, 'Tenant not found!');
+      }
+
+      // 🔒 Hapus users berdasarkan tenant_id (tenants.id), BUKAN owner_id
+      const tenantIds = tenants.map(t => t.id);
+      await trx("users").whereIn('tenant_id', tenantIds).delete();
       await trx("tenants").where('owner_id', id).delete();
       await trx("owners").where('id', id).delete();
-      await master.raw(`DROP DATABASE IF EXISTS \`${tenant.db_name}\``);
-      await master.raw(`DROP USER IF EXISTS ??@'%'`, [tenant.db_user]);
-      await master.raw(`DROP USER IF EXISTS ??@'localhost'`, [tenant.db_user]);
-      trx.commit();
+      await trx.commit();
+
+      // DDL (DROP) tidak transaksional di MySQL → jalankan setelah commit
+      for (const tenant of tenants) {
+        if (tenant.db_name) await master.raw(`DROP DATABASE IF EXISTS \`${tenant.db_name}\``);
+        if (tenant.db_user) {
+          await master.raw(`DROP USER IF EXISTS ??@'%'`, [tenant.db_user]);
+          await master.raw(`DROP USER IF EXISTS ??@'localhost'`, [tenant.db_user]);
+        }
+      }
+
       response.success(res, null, 'Tenant deleted!');
     } catch (err) {
-      trx.rollback();
+      await trx.rollback();
       response.error(res, err, err.message, 500);
     }
   },
@@ -195,7 +220,7 @@ const AdminClientController = {
     try {
       const owner = await master("owners as o").leftJoin("tenants as t", "o.id", "t.owner_id").where("o.id", id).first(master.raw(`
         o.id, o.business_name, o.email, o.phone, o.created_at, o.status AS owner_status,
-        t.id as tenant_id, t.db_name, t.db_user, t.db_pass
+        t.id as tenant_id, t.db_name
       `)).orderBy("o.id", "desc");
 
       if (!owner) return response.notFound(res, 'Tenant not found!');
@@ -217,17 +242,26 @@ const AdminClientController = {
     
     try {
       const topup = await trx("wallet_topups").where({ id, status: 'pending' }).first();
-      
+
       if (!topup) {
         await trx.rollback();
         return res.status(404).json({ success: false, message: "Topup tidak ditemukan atau sudah diproses." });
       }
 
-      // Update status topup
-      await trx("wallet_topups").where({ id }).update({
-        status: 'success',
-        paid_at: master.fn.now()
-      });
+      // 🔒 Update BERSYARAT status=pending. Bila 2 request approve berbarengan (mis. dobel-klik),
+      // hanya satu yang mengubah baris (affectedRows=1); yang lain dapat 0 → batalkan agar saldo
+      // tidak ditambahkan dua kali.
+      const updatedRows = await trx("wallet_topups")
+        .where({ id, status: 'pending' })
+        .update({
+          status: 'success',
+          paid_at: master.fn.now()
+        });
+
+      if (!updatedRows) {
+        await trx.rollback();
+        return res.status(409).json({ success: false, message: "Topup sudah diproses sebelumnya." });
+      }
 
       // Ambil saldo owner
       const owner = await trx("owners as o").forUpdate().where('o.id', topup.owner_id).first('o.wallet_balance');

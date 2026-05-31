@@ -16,14 +16,18 @@ const activityLogRoutes = require('./routes/activityLog.routes');
 const backupRoutes = require('./routes/backup.routes');
 const ownerRoutes = require('./routes/owner.routes');
 const tableRoutes = require('./routes/table.routes'); // 🔥
-const syncRoutes = require('./routes/sync.routes');
 const walletTransactionRoutes = require('./routes/walletTransaction.routes');
 const productReturnRoutes = require('./routes/productReturn.routes');
 const ppobRoutes = require('./routes/ppob.routes');
 const webhookRoutes = require('./routes/webhook.routes');
+// ⛔ DINONAKTIFKAN: const syncRoutes = require('./routes/sync.routes'); — lihat catatan di bawah
 const superadminRoutes = require('./routes/superadminRoutes');
 
 const app = express();
+// 🔒 Di belakang reverse proxy (Nginx), percayai 1 hop agar req.ip = IP klien asli
+// (X-Forwarded-For), bukan IP proxy. Tanpa ini rate-limit login keliru memakai 1 IP untuk
+// semua mitra → bisa mengunci semua orang. Sesuaikan angka jika ada >1 proxy di depan.
+app.set('trust proxy', 1);
 const httpServer = createServer(app);
 init(httpServer);
 
@@ -58,7 +62,10 @@ app.use('/api/stores', tableRoutes); // 🔥
 app.use('/api/wallet', walletTransactionRoutes);
 app.use('/api/stores', ppobRoutes);
 // webhookRoutes sudah dipindah ke atas (sebelum express.json())
-app.use('/sync', syncRoutes);
+// ⛔ DINONAKTIFKAN (keamanan): /sync tanpa autentikasi, membocorkan data (termasuk hash
+// password), dan skemanya usang (`pool` tak terdefinisi). Sinkronisasi offline aplikasi memakai
+// endpoint ber-auth biasa. Jangan diaktifkan tanpa auth + tenant scope.
+// app.use('/sync', syncRoutes);
 app.use('/api/superadmin', superadminRoutes);
 
 // Default route

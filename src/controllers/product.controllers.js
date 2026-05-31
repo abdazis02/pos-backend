@@ -253,7 +253,7 @@ const ProductController = {
 
       const [stats, low_stock_items, recent_products] = await Promise.all(ProductModel.getProductStats(req.db, storeId));
 
-      stats.average_price = stats.sum_price / stats.total_products;
+      stats.average_price = stats.total_products > 0 ? (stats.sum_price / stats.total_products) : 0;
       delete stats.sum_price
 
       stats.low_stock_items = low_stock_items

@@ -585,9 +585,9 @@ const bcrypt = require('bcryptjs'); // Pastikan package ini sudah di-install
 
 exports.getProfile = async (req, res) => {
   try {
-    // Sesuaikan nama tabel 'users' dengan tabel admin di database Anda
-    const admin = await master('users').where('role', 'superadmin').first(); 
-    
+    // 🔒 Ambil HANYA akun superadmin yang sedang login (bukan sembarang superadmin)
+    const admin = await master('users').where('id', req.user.id).first();
+
     if (!admin) {
         return res.status(404).json({ success: false, message: "Admin tidak ditemukan" });
     }
@@ -610,8 +610,8 @@ exports.updateProfile = async (req, res) => {
   try {
     const { name, email } = req.body;
     
-    // Sesuaikan parameter where() sesuai cara Anda mengenali Superadmin
-    await master('users').where('role', 'superadmin').update({
+    // 🔒 Update HANYA akun superadmin yang sedang login (cegah ubah semua superadmin)
+    await master('users').where('id', req.user.id).update({
       name: name,
       email: email,
       updated_at: new Date()
@@ -628,7 +628,7 @@ exports.updatePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
 
-    const admin = await master('users').where('role', 'superadmin').first();
+    const admin = await master('users').where('id', req.user.id).first();
     if (!admin) {
         return res.status(404).json({ success: false, message: "Admin tidak ditemukan" });
     }
@@ -643,7 +643,8 @@ exports.updatePassword = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashPassword = await bcrypt.hash(newPassword, salt);
 
-    await master('users').where('role', 'superadmin').update({
+    // 🔒 Ubah HANYA password akun yang sedang login
+    await master('users').where('id', req.user.id).update({
       password: hashPassword,
       updated_at: new Date()
     });
@@ -659,8 +660,10 @@ exports.updatePassword = async (req, res) => {
 exports.getLeaderboard = async (req, res) => {
   try {
     const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const [yr, mo] = month.split('-').map(Number);
+    const lastDay = new Date(yr, mo, 0).getDate(); // hari terakhir bulan (benar utk Feb/30 hari)
     const startDate = `${month}-01 00:00:00`;
-    const endDate   = `${month}-31 23:59:59`;
+    const endDate   = `${month}-${String(lastDay).padStart(2, '0')} 23:59:59`;
 
     // 1. Top 5 Mitra Paling Aktif Bulan Ini
     // KITA KEMBALIKAN 'transaction_fee' agar transaksi POS kasir (seperti Abijaya) terhitung!
@@ -781,8 +784,10 @@ exports.getAuditLogs = async (req, res) => {
 exports.getMonthlyReport = async (req, res) => {
   try {
     const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const [yr, mo] = month.split('-').map(Number);
+    const lastDay = new Date(yr, mo, 0).getDate(); // hari terakhir bulan (benar utk Feb/30 hari)
     const startDate = `${month}-01 00:00:00`;
-    const endDate   = `${month}-31 23:59:59`;
+    const endDate   = `${month}-${String(lastDay).padStart(2, '0')} 23:59:59`;
 
     // 1. Dapatkan daftar mitra yang AKTIF melakukan transaksi di bulan tersebut
     const activeClients = await master('owners as o')

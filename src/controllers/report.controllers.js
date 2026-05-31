@@ -473,7 +473,9 @@ const ReportController = {
             .where({ store_id, status: 'success' })
             .whereRaw(`${dateFilter('created_at')} >= ? AND ${dateFilter('created_at')} <= ?`, [start, end])
             .select(
-              req.db.raw(`DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '${timezone}'), '%Y-%m-%d %H:%i:%s') as date`),
+              // DB sudah hardlock +09:00, jadi pakai DATE_FORMAT langsung (sama seperti sisi POS).
+              // (Sebelumnya memakai variabel `timezone` yang tidak terdefinisi → error & PPOB hilang dari laporan.)
+              req.db.raw(`DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') as date`),
               req.db.raw("'PPOB' as source"),
               "product_name as name",
               "buyer_sku_code as type",
