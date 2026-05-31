@@ -247,7 +247,11 @@ const PPOBController = {
         customer_no: value.customer_no,
         ref_id,
         product_name: result?.data?.product_name || product.product_name || value.buyer_sku_code,
-        price: purchaseModal,
+        // 💡 Simpan MODAL RIIL MITRA (= modal Digiflazz + margin PIPos), bukan modal Digiflazz saja.
+        // Laporan mitra menghitung laba = sale_price - price, jadi `price` harus = total yang dibayar
+        // mitra (totalCostForMitra). Sebelumnya memakai purchaseModal (tanpa margin PIPos) → laba mitra
+        // keliru ikut menghitung margin PIPos. Potongan saldo & catatan wallet TIDAK berubah.
+        price: totalCostForMitra,
         sale_price: value.sale_price,
         status: (() => {
           const rc = String(result?.rc || '');
