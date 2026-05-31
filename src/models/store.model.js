@@ -1,6 +1,6 @@
 const StoreModel = {
   getAllStores(db) {
-    return db("stores").select("*")
+    return db("stores").orderBy("id", "asc").select("*")
   },
 
   getAllByOwner(db) {

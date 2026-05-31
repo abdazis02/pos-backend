@@ -24,8 +24,8 @@ const storage = multer.diskStorage({
     const type = req.body.type;
     let fileName = file.originalname;
     // Mengubah nama file agar sesuai dengan link di Login.tsx
-    if (type === 'apk') fileName = 'Pipos_v1.2.4.apk';
-    if (type === 'exe') fileName = 'Pipos_Setup_v1.2.4.exe';
+    if (type === 'apk') fileName = 'Pipos.apk';
+    if (type === 'exe') fileName = 'Pipos.exe';
     cb(null, fileName);
   }
 });

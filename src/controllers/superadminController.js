@@ -281,17 +281,22 @@ exports.getTransactions = async (req, res) => {
     const countRow = await baseQuery.clone().count('wt.id as total').first();
     const total = parseInt(countRow.total) || 0;
 
-    const allTotalRow = await master('wallet_transactions').count('id as total').first();
-    const allPosRow   = await master('wallet_transactions').where('reference_type', 'transactions').count('id as total').first();
-    const allPpobRow  = await master('wallet_transactions').where('reference_type', 'ppob_orders').count('id as total').first();
-    const allLabaRow  = await master('wallet_transactions').whereIn('type', ['transaction_fee', 'ppob_margin', 'ppob_fee']).select(master.raw('COALESCE(SUM(ABS(amount)), 0) as total')).first();
+    // 🔥 OPTIMASI 1: Gabungkan 4 query statistik berat menjadi 1 kali full table scan
+    const statsRow = await master('wallet_transactions')
+      .select(
+        master.raw("COUNT(CASE WHEN reference_type = 'transactions' THEN 1 END) as pos_count"),
+        master.raw("COUNT(CASE WHEN reference_type = 'ppob_orders' THEN 1 END) as ppob_count"),
+        master.raw("COUNT(*) as total_count"),
+        master.raw("COALESCE(SUM(CASE WHEN type IN ('transaction_fee', 'ppob_margin', 'ppob_fee') THEN ABS(amount) ELSE 0 END), 0) as total_laba")
+      )
+      .first();
 
     const stats = {
-      total: parseInt(allTotalRow.total) || 0,
-      pos: parseInt(allPosRow.total) || 0,
-      ppob: parseInt(allPpobRow.total) || 0,
+      total: parseInt(statsRow?.total_count) || 0,
+      pos: parseInt(statsRow?.pos_count) || 0,
+      ppob: parseInt(statsRow?.ppob_count) || 0,
       pending: 0,
-      laba: parseFloat(allLabaRow.total) || 0,
+      laba: parseFloat(statsRow?.total_laba) || 0,
     };
 
     const logs = await baseQuery.clone()
@@ -315,29 +320,39 @@ exports.getTransactions = async (req, res) => {
     const formattedData = [];
     const uniqueMap = new Map();
 
-    for (let l of logs) {
-      let clientDb = null;
-      let detail = null;
+    // 🔥 OPTIMASI 2: Ambil semua data tenant dalam 1 query saja untuk menghindari N+1 query ke DB master
+    const uniqueOwnerIds = [...new Set(logs.map(l => l.owner_id))];
+    const tenants = await master('tenants').whereIn('owner_id', uniqueOwnerIds);
+    const tenantMap = new Map(tenants.map(t => [t.owner_id, t]));
 
-      try {
-        // Ambil konfigurasi database secara aman dari tabel tenants
-        const tenantInfo = await master('tenants').where('owner_id', l.owner_id).first();
-        
-        if (tenantInfo && tenantInfo.db_name) {
-          clientDb = getTenantConnection({
-            db_name: tenantInfo.db_name,
-            db_user: tenantInfo.db_user,
-            db_pass: tenantInfo.db_pass
-          });
+    // 🔥 OPTIMASI 3: Jalankan query ke masing-masing database tenant secara PARALEL dengan Promise.all
+    const logsWithDetails = await Promise.all(
+      logs.map(async (l) => {
+        let detail = null;
+        try {
+          const tenantInfo = tenantMap.get(l.owner_id);
+          if (tenantInfo && tenantInfo.db_name) {
+            const clientDb = getTenantConnection({
+              db_name: tenantInfo.db_name,
+              db_user: tenantInfo.db_user,
+              db_pass: tenantInfo.db_pass
+            });
 
-          if (l.reference_type === 'transactions' && l.reference_id) {
-            detail = await clientDb('transactions').where('id', l.reference_id).first();
-          } else if (l.reference_type === 'ppob_orders' && l.reference_id) {
-            detail = await clientDb('ppob_orders').where('id', l.reference_id).first();
+            if (l.reference_type === 'transactions' && l.reference_id) {
+              detail = await clientDb('transactions').where('id', l.reference_id).first();
+            } else if (l.reference_type === 'ppob_orders' && l.reference_id) {
+              detail = await clientDb('ppob_orders').where('id', l.reference_id).first();
+            }
           }
+        } catch (e) {
+          // Abaikan jika database tenant tertentu bermasalah
         }
-      } catch(e) { }
+        return { log: l, detail };
+      })
+    );
 
+    // 4. Proses formatting data
+    for (let { log: l, detail } of logsWithDetails) {
       let tipe = l.reference_type === 'transactions' ? 'POS' : (l.reference_type === 'ppob_orders' ? 'PPOB' : l.tipe);
       
       let status = 'Sukses';
