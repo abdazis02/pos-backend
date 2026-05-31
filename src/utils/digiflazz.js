@@ -159,7 +159,7 @@ async function checkInquiry({ buyer_sku_code, customer_no, ref_id }) {
 async function checkTransactionStatus(ref_id) {
   if (!ref_id) throw new Error('ref_id wajib diisi untuk cek status');
   return sendDigiflazzRequest('transaction', {
-    commands: 'status',
+    commands: 'check-status',
     ref_id,
   });
 }
