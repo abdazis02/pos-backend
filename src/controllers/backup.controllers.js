@@ -370,6 +370,21 @@ exports.importData = async (req, res) => {
     let importedCount = 0;
     const currentMapping = dataType === 'karyawan' ? userMapping : productMapping;
 
+    // 🔁 ANTI-DUPLIKAT (khusus import produk): muat produk yang SUDAH ADA di toko ini ke memori
+    // sekali saja, lalu cocokkan tiap baris via barcode → sku → nama. Map juga dipakai untuk
+    // mendeteksi duplikat DI DALAM file yang sama (baris yang sudah dimasukkan di iterasi sebelumnya).
+    const byBarcode = new Map();
+    const bySku = new Map();
+    const byName = new Map();
+    if (dataType !== 'karyawan') {
+      const existing = await req.db('products').where('store_id', store_id).select('id', 'name', 'sku', 'barcode');
+      for (const p of existing) {
+        if (p.barcode) byBarcode.set(String(p.barcode).trim(), p.id);
+        if (p.sku) bySku.set(String(p.sku).trim(), p.id);
+        if (p.name) byName.set(String(p.name).toLowerCase().trim(), p.id);
+      }
+    }
+
     for (let i = 0; i < rows.length; i++) {
       const rawRow = rows[i];
       const mappedData = mapFields(rawRow, currentMapping);
@@ -436,27 +451,41 @@ exports.importData = async (req, res) => {
           updated_at: new Date()
         };
 
-        // 🔥 Gunakan UPSERT yang lebih fleksibel
+        // 🔁 ANTI-DUPLIKAT: cocokkan ke produk yang sudah ada (barcode → sku → nama).
+        // Tidak bergantung pada UNIQUE index (yang ternyata belum ada), jadi import ulang /
+        // kepanggil 2x tidak lagi membuat baris dobel.
         try {
-          // Jika ada barcode, jadikan patokan update
-          if (finalProduct.barcode) {
-            await req.db("products").insert(finalProduct)
-              .onConflict(['store_id', 'barcode'])
-              .merge([
-                'name', 'sku', 'price', 'cost_price', 'stock', 'category',
-                'description', 'updated_at', 'without_stock'
-              ]);
-          } else if (finalProduct.sku) {
-            // Jika tidak ada barcode tapi ada SKU
-            await req.db("products").insert(finalProduct)
-              .onConflict(['store_id', 'sku'])
-              .merge([
-                'name', 'barcode', 'price', 'cost_price', 'stock', 'category',
-                'description', 'updated_at', 'without_stock'
-              ]);
+          const bc = finalProduct.barcode ? String(finalProduct.barcode).trim() : null;
+          const sk = finalProduct.sku ? String(finalProduct.sku).trim() : null;
+          const nm = String(finalProduct.name).toLowerCase().trim();
+
+          let existingId = null;
+          if (bc && byBarcode.has(bc)) existingId = byBarcode.get(bc);
+          else if (sk && bySku.has(sk)) existingId = bySku.get(sk);
+          // Cocokkan via nama HANYA bila tidak ada barcode & sku (cegah salah-gabung produk beda).
+          else if (!bc && !sk && byName.has(nm)) existingId = byName.get(nm);
+
+          if (existingId) {
+            // Sudah ada → UPDATE, jangan bikin baris baru.
+            await req.db("products").where({ id: existingId, store_id }).update({
+              name: finalProduct.name,
+              sku: finalProduct.sku,
+              barcode: finalProduct.barcode,
+              price: finalProduct.price,
+              cost_price: finalProduct.cost_price,
+              stock: finalProduct.stock,
+              category: finalProduct.category,
+              description: finalProduct.description,
+              without_stock: finalProduct.without_stock,
+              updated_at: new Date()
+            });
           } else {
-            // Jika tidak ada keduanya, insert saja
-            await req.db("products").insert(finalProduct);
+            const inserted = await req.db("products").insert(finalProduct);
+            const newId = Array.isArray(inserted) ? inserted[0] : inserted;
+            // Daftarkan agar duplikat di dalam file yang sama juga tertangkap.
+            if (bc) byBarcode.set(bc, newId);
+            if (sk) bySku.set(sk, newId);
+            byName.set(nm, newId);
           }
           importedCount++;
         } catch (dbErr) {
