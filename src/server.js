@@ -5,6 +5,7 @@ const server = require('./app');
 const master = require('./config/knexMaster');
 const { getTenantConnection } = require('./config/knexTenant');
 const { startPpobSyncJob } = require('./jobs/ppobSync.job');
+const { startMonthlyFeeJob } = require('./jobs/monthlyFee.job');
 
 const PORT = process.env.PORT || 5000;
 
@@ -34,4 +35,7 @@ server.listen(PORT, async () => {
 
     // 🔄 Mulai auto-sync produk PPOB dari Digiflazz
     startPpobSyncJob();
+
+    // 💳 Mulai job potong biaya admin bulanan (Rp 10.000 tiap tanggal 1)
+    startMonthlyFeeJob();
 });

@@ -543,6 +543,41 @@ exports.updatePosFee = async (req, res) => {
   }
 };
 
+// ============================================
+// BIAYA ADMIN BULANAN (dipotong dari saldo tiap tanggal 1)
+// ============================================
+
+exports.getMonthlyFee = async (req, res) => {
+  try {
+    const setting = await master('settings').where('setting_key', 'monthly_admin_fee').first();
+    const fee = setting ? parseFloat(setting.setting_value) : 10000; // default 10.000
+    res.status(200).json({ success: true, data: { fee } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Gagal memuat biaya admin bulanan" });
+  }
+};
+
+exports.updateMonthlyFee = async (req, res) => {
+  try {
+    const fee = parseInt(req.body.fee, 10);
+    if (isNaN(fee) || fee < 0) {
+      return res.status(400).json({ success: false, message: "Nilai biaya tidak valid" });
+    }
+
+    const exists = await master('settings').where('setting_key', 'monthly_admin_fee').first();
+    if (exists) {
+      await master('settings').where('setting_key', 'monthly_admin_fee').update({ setting_value: fee.toString() });
+    } else {
+      await master('settings').insert({ setting_key: 'monthly_admin_fee', setting_value: fee.toString() });
+    }
+
+    res.status(200).json({ success: true, message: "Biaya admin bulanan berhasil diperbarui" });
+  } catch (error) {
+    console.error("Error updateMonthlyFee:", error);
+    res.status(500).json({ success: false, message: "Gagal memperbarui biaya admin bulanan" });
+  }
+};
+
 // Menghapus Mitra beserta data terkait (Tenants, Users, Wallet)
 exports.deleteClient = async (req, res) => {
   try {

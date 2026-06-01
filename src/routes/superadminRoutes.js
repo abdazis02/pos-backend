@@ -82,6 +82,10 @@ router.put('/products/:id/margin', requireSuperadmin, auditLog('UPDATE_MARGIN', 
 router.get('/settings/pos-fee', requireSuperadmin, superadminController.getPosFee);
 router.put('/settings/pos-fee', requireSuperadmin, auditLog('UPDATE_POS_FEE', 'settings', (req) => `Biaya POS diubah: ${JSON.stringify(req.body)}`), superadminController.updatePosFee);
 
+// --- PENGATURAN BIAYA ADMIN BULANAN (potong saldo tiap tanggal 1) ---
+router.get('/settings/monthly-fee', requireSuperadmin, superadminController.getMonthlyFee);
+router.put('/settings/monthly-fee', requireSuperadmin, auditLog('UPDATE_MONTHLY_FEE', 'settings', (req) => `Biaya admin bulanan diubah: ${JSON.stringify(req.body)}`), superadminController.updateMonthlyFee);
+
 // --- UPLOAD APK & EXE DARI FRONTEND ---
 router.post('/settings/upload-app', requireSuperadmin, upload.single('file'), auditLog('UPLOAD_APP', 'settings', (req) => `Aplikasi Klien (${req.body.type}) diperbarui`), (req, res) => {
   if (!req.file) {
