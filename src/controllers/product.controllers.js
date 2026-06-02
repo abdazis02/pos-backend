@@ -149,9 +149,15 @@ const ProductController = {
         }
       });
 
-      if (product.barcode != value.barcode) {
+      // Cek duplikat barcode HANYA bila barcode diisi & benar-benar berubah.
+      // Wajib mengecualikan produk ini sendiri: MySQL membandingkan VARCHAR dengan
+      // mengabaikan spasi belakang, jadi tanpa cek id, produk yang barcode-nya ada
+      // spasi/whitespace (umum dari impor) akan "menemukan dirinya sendiri" → 400 palsu.
+      if (value.barcode && product.barcode !== value.barcode) {
         const existing = await ProductModel.findProductByBarcode(req.db, store_id, value.barcode);
-        if (!!existing) return response.badRequest(res, 'Barcode sudah terdaftar di toko ini');
+        if (existing && String(existing.id) !== String(id)) {
+          return response.badRequest(res, 'Barcode sudah terdaftar di toko ini');
+        }
       }
 
       const isUpdated = await ProductModel.updateProduct(req.db, store_id, id, value);
