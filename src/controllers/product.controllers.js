@@ -137,8 +137,12 @@ const ProductController = {
         value.image_url = move(req.file, req.user.tenant_id);
       }
 
-      // Normalisasi input dari query validation yang ter-strip
-      const cleanupFields = ['expired_date', 'batch_number', 'wholesale_price', 'min_wholesale_qty', 'sku', 'barcode', 'description', 'category', 'discount_value', 'discount_bundle_min_qty', 'discount_bundle_value', 'buy_qty', 'free_qty'];
+      // Normalisasi input dari query validation yang ter-strip.
+      // PENTING: 'discount_type' ikut di sini agar saat promo dihapus (Tanpa Diskon),
+      // kolom discount_type ikut di-NULL-kan. Tanpa ini, discount_type lama tetap
+      // tersimpan sehingga produk masih dianggap punya promo meski nilainya sudah null.
+      // (Nilai '' dari multipart → null juga, menghindari error ENUM "Data truncated".)
+      const cleanupFields = ['discount_type', 'expired_date', 'batch_number', 'wholesale_price', 'min_wholesale_qty', 'sku', 'barcode', 'description', 'category', 'discount_value', 'discount_bundle_min_qty', 'discount_bundle_value', 'buy_qty', 'free_qty'];
       cleanupFields.forEach(field => {
         if (value[field] === '' || value[field] === undefined) {
           value[field] = null;
