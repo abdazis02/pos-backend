@@ -52,6 +52,7 @@ async function chargeMonthlyFee() {
 
     const owners = await master('owners')
       .whereRaw("(status IS NULL OR status <> 'suspended')")
+      .whereRaw("created_at < DATE_FORMAT(NOW(), '%Y-%m-01 00:00:00')")
       .select('id');
 
     let charged = 0, alreadyDone = 0, lowBalance = 0, failed = 0;
