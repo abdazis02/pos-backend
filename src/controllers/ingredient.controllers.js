@@ -9,6 +9,9 @@ const ingredientSchema = Joi.object({
   stock: Joi.number().min(0).allow(null, '').default(0),
   min_stock: Joi.number().min(0).allow(null, '').default(0),
   is_active: Joi.boolean().default(true),
+  purchase_unit: Joi.string().trim().max(50).allow(null, ''),
+  purchase_price: Joi.number().min(0).allow(null, ''),
+  conversion_rate: Joi.number().min(0).allow(null, ''),
 });
 
 const IngredientController = {
@@ -34,6 +37,10 @@ const IngredientController = {
       if (error) return response.badRequest(res, error.details[0].message, error.details);
 
       value.store_id = parseInt(store_id);
+      if (value.purchase_unit && value.conversion_rate && value.conversion_rate > 0) {
+        value.cost_price = value.purchase_price / value.conversion_rate;
+      }
+
       ['cost_price', 'stock', 'min_stock'].forEach((f) => {
         if (value[f] === '' || value[f] === null || value[f] === undefined) value[f] = 0;
       });
@@ -56,6 +63,10 @@ const IngredientController = {
 
       const existing = await IngredientModel.getById(req.db, store_id, id);
       if (!existing) return response.notFound(res, 'Bahan baku tidak ditemukan');
+
+      if (value.purchase_unit && value.conversion_rate && value.conversion_rate > 0) {
+        value.cost_price = value.purchase_price / value.conversion_rate;
+      }
 
       ['cost_price', 'stock', 'min_stock'].forEach((f) => {
         if (value[f] === '' || value[f] === null || value[f] === undefined) value[f] = 0;

@@ -38,16 +38,19 @@ const ProductModel = {
       COUNT(*) as total_products,
       COUNT(CASE WHEN is_active THEN 1 END) as active_products,
       COUNT(CASE WHEN is_active = 0 THEN 1 END) as inactive_products,
-      SUM(COALESCE(price, 0) * COALESCE(stock, 0)) as total_inventory_value,
+      SUM(COALESCE(price, 0) * CASE WHEN without_stock = 1 THEN 0 ELSE COALESCE(stock, 0) END) as total_inventory_value,
       SUM(price) as sum_price,
-      COUNT(CASE WHEN is_active AND stock > 10 THEN 1 END) as in_stock,
-      COUNT(CASE WHEN is_active AND stock <= 10 THEN 1 END) as low_stock,
-      COUNT(CASE WHEN is_active AND stock = 0 THEN 1 END) as out_of_stock
+      COUNT(CASE WHEN is_active AND (stock > 10 OR without_stock = 1) THEN 1 END) as in_stock,
+      COUNT(CASE WHEN is_active AND stock <= 10 AND (without_stock = 0 OR without_stock IS NULL) THEN 1 END) as low_stock,
+      COUNT(CASE WHEN is_active AND stock <= 0 AND (without_stock = 0 OR without_stock IS NULL) THEN 1 END) as out_of_stock
     `)).where({ store_id }).first();
 
     const low_stock_items = db("products")
       .where({ store_id, is_active: true })
       .where('stock', '<=', 10)
+      .andWhere(function() {
+        this.whereNull('without_stock').orWhere('without_stock', 0);
+      })
       .select('id', 'name', 'stock', 'price');
 
     const recent_products = db("products")
@@ -98,7 +101,13 @@ const ProductModel = {
   },
 
   getLowStock(db, store_id, threshold = 10) {
-    return db("products").where({ store_id, is_active: true }).where("stock", "<=", threshold).orderBy("stock")
+    return db("products")
+      .where({ store_id, is_active: true })
+      .where("stock", "<=", threshold)
+      .andWhere(function() {
+        this.whereNull('without_stock').orWhere('without_stock', 0);
+      })
+      .orderBy("stock");
   },
 
   // Bulk update
