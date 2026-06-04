@@ -84,7 +84,7 @@ async function refundPpobOrder(tenant_id, order_id, ref_id) {
     const before = await OwnerModel.getBalanceByTenant(trx, tenant_id); // forUpdate lock
 
     const existingRefund = await trx('wallet_transactions')
-      .where({ reference_type: 'ppob_orders', reference_id: order_id, type: 'ppob_refund' })
+      .where({ owner_id: owner.id, reference_type: 'ppob_orders', reference_id: order_id, type: 'ppob_refund' })
       .first();
     if (existingRefund) { await trx.rollback(); return; }
 
