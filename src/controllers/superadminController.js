@@ -396,8 +396,8 @@ exports.getTransactions = async (req, res) => {
          }
 
          const entry = uniqueMap.get(uniqueKey);
-         if (l.tipe !== 'ppob_purchase') {
-             entry.laba += laba; // Tambahkan laba jika ini baris margin/fee
+         if (['transaction_fee', 'ppob_margin', 'ppob_fee'].includes(l.tipe)) {
+             entry.laba += laba; // Hanya hitung margin/fee sungguhan, BUKAN refund!
          }
          continue; // Selesai proses baris PPOB ini
       }
