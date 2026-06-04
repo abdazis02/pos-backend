@@ -374,7 +374,7 @@ exports.getTransactions = async (req, res) => {
       // GABUNGKAN PPOB MENJADI 1 BARIS
       if (l.reference_type === 'ppob_orders') {
          tipe = 'PPOB';
-         const uniqueKey = 'ppob-' + l.reference_id;
+         const uniqueKey = 'ppob-' + l.owner_id + '-' + l.reference_id;
          
          if (!uniqueMap.has(uniqueKey)) {
             uniqueMap.set(uniqueKey, {
