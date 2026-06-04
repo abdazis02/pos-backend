@@ -624,6 +624,68 @@ const PPOBController = {
       return response.error(res, error, 'Gagal memeriksa status ke Digiflazz');
     }
   },
+
+  async fixMissingRefunds(req, res) {
+    try {
+      let refundedCount = 0;
+      let logs = [];
+      const tenants = await master('tenants')
+        .join('owners', 'tenants.owner_id', 'owners.id')
+        .select('tenants.id as tenant_id', 'owners.id as owner_id', 'tenants.db_name');
+
+      for (const t of tenants) {
+        const tenantDb = getTenantConnection(t);
+        const failedOrders = await tenantDb('ppob_orders').where('status', 'failed');
+        
+        for (const order of failedOrders) {
+          const trx = await master.transaction();
+          try {
+            const row = await trx('owners').forUpdate().where('id', t.owner_id).first('wallet_balance');
+            if (!row) { await trx.rollback(); continue; }
+
+            const existingRefund = await trx('wallet_transactions')
+              .where({ owner_id: t.owner_id, reference_type: 'ppob_orders', reference_id: order.id, type: 'ppob_refund' })
+              .first();
+            if (existingRefund) { await trx.rollback(); continue; }
+
+            const deductions = await trx('wallet_transactions')
+              .where({ owner_id: t.owner_id, reference_type: 'ppob_orders', reference_id: order.id })
+              .whereIn('type', ['ppob_purchase', 'transaction_fee'])
+              .sum({ total: 'amount' })
+              .first();
+
+            const refundAmount = Math.abs(parseFloat(deductions?.total || 0));
+            if (refundAmount <= 0) { await trx.rollback(); continue; }
+
+            const balance = parseFloat(row.wallet_balance || 0);
+            const after = balance + refundAmount;
+
+            await trx('owners').where('id', t.owner_id).update({ wallet_balance: after });
+            await trx('wallet_transactions').insert({
+              owner_id: t.owner_id,
+              type: 'ppob_refund',
+              amount: refundAmount,
+              balance_after: after,
+              reference_type: 'ppob_orders',
+              reference_id: order.id,
+              description: `Refund Susulan PPOB gagal (ref ${order.ref_id})`,
+            });
+
+            await trx.commit();
+            refundedCount++;
+            logs.push(`✅ [REFUNDED] Ref: ${order.ref_id} | Jumlah: +${refundAmount} | Saldo Akhir: ${after}`);
+          } catch (err) {
+            await trx.rollback();
+            logs.push(`❌ Gagal refund order ${order.ref_id}: ${err.message}`);
+          }
+        }
+      }
+      return response.success(res, { refundedCount, logs }, `Berhasil merefund ${refundedCount} transaksi gagal yang nyangkut.`);
+    } catch (error) {
+      console.error('PPOB Fix error:', error);
+      return response.error(res, error, 'Gagal mengeksekusi perbaikan refund');
+    }
+  },
 };
 
 module.exports = PPOBController;
