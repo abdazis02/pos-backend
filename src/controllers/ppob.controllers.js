@@ -89,7 +89,7 @@ async function refundPpobOrder(tenant_id, order_id, ref_id) {
     if (existingRefund) { await trx.rollback(); return; }
 
     const deductions = await trx('wallet_transactions')
-      .where({ reference_type: 'ppob_orders', reference_id: order_id })
+      .where({ owner_id: owner.id, reference_type: 'ppob_orders', reference_id: order_id })
       .whereIn('type', ['ppob_purchase', 'transaction_fee'])
       .sum({ total: 'amount' })
       .first();
