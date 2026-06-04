@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const master = require('../src/config/knexMaster');
 const { getTenantConnection } = require('../src/config/knexTenant');
 
