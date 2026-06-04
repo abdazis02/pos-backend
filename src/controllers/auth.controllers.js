@@ -407,6 +407,122 @@ const AuthController = {
       console.error('REGISTER GOOGLE ERROR:', err);
       return response.error(res, err, 'Gagal mendaftar via Google');
     }
+  },
+
+  /* =====================================================
+     REGISTER MANUAL
+  ===================================================== */
+  async registerManual(req, res) {
+    const {
+      email, name, business_name, business_category,
+      phone, province, city, district, subdistrict, address,
+      password
+    } = req.body;
+
+    if (!email || !name || !business_name || !password) {
+      return response.badRequest(res, 'Data pendaftaran tidak lengkap.');
+    }
+
+    try {
+      // 1. Cek duplikasi email
+      const existingEmail = await UserModel.findByEmail(email);
+      if (existingEmail) return response.badRequest(res, 'Email sudah terdaftar.');
+
+      // 2. Alur pendaftaran
+      let db_name, db_user, db_pass, owner_id, tenant_id;
+      const trx = await master.transaction();
+
+      try {
+        owner_id = (await trx("owners").insert({
+          business_name,
+          business_category: business_category || 'lainnya',
+          email,
+          phone,
+          address,
+          status: 'active',
+          wallet_balance: 0
+        }))[0];
+
+        db_name = `kasir_tenant_${owner_id}`;
+        db_user = `user_${owner_id}`;
+        db_pass = require('crypto').randomBytes(16).toString('hex');
+
+        tenant_id = (await trx("tenants").insert({ owner_id, db_name, db_user, db_pass }))[0];
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        await trx("users").insert({
+          tenant_id: tenant_id,
+          name: name,
+          email: email,
+          password: hashedPassword,
+          role: 'owner',
+          business_category: business_category || 'lainnya',
+          is_active: true,
+          verified_at: trx.fn.now(),
+        });
+
+        await trx.commit();
+      } catch (err) {
+        await trx.rollback();
+        throw err;
+      }
+
+      // 3. Setup Database Tenant
+      await master.raw(`CREATE DATABASE IF NOT EXISTS ??`, [db_name]);
+      await master.raw(`CREATE USER IF NOT EXISTS ??@'%' IDENTIFIED BY ?`, [db_user, db_pass]);
+      await master.raw(`CREATE USER IF NOT EXISTS ??@'localhost' IDENTIFIED BY ?`, [db_user, db_pass]);
+      await master.raw(`GRANT ALL PRIVILEGES ON \`${db_name}\`.* TO ??@'%'`, [db_user]);
+      await master.raw(`GRANT ALL PRIVILEGES ON \`${db_name}\`.* TO ??@'localhost'`, [db_user]);
+      await master.raw(`GRANT SELECT ON \`${process.env.DB_NAME}\`.\`users\` TO ??@'%'`, [db_user]);
+      await master.raw(`GRANT SELECT ON \`${process.env.DB_NAME}\`.\`users\` TO ??@'localhost'`, [db_user]);
+      await master.raw(`FLUSH PRIVILEGES`);
+
+      const tenant_db = getTenantConnection({ db_name, db_user, db_pass });
+      await tenant_db.migrate.latest({ directory: './migrations/tenant' });
+
+      // Buat toko pertama default
+      const [store_id] = await tenant_db("stores").insert({
+        name: business_name,
+        address: address,
+        phone: phone,
+      });
+
+      // 4. Kembalikan Login Response
+      const user = await UserModel.findByEmail(email);
+      const jwtPayload = {
+        id: user.id,
+        tenant_id: user.tenant_id,
+        store_id: store_id,
+        role: user.role,
+        name: user.name,
+        email: user.email,
+        commission_rate: user.commission_rate,
+        db_name: db_name,
+        business_name,
+        business_category,
+        address,
+        phone,
+      };
+
+      const token = jwt.sign(
+        jwtPayload,
+        process.env.JWT_SECRET,
+        { expiresIn: process.env.JWT_EXPIRE || '1d' }
+      );
+
+      delete jwtPayload.db_name;
+      jwtPayload.stores = await StoreModel.getAllStores(tenant_db);
+      jwtPayload.balance = 0;
+
+      return response.success(res, {
+        token,
+        user: jwtPayload
+      }, 'Pendaftaran berhasil! Selamat datang di PIPos.');
+
+    } catch (err) {
+      console.error('REGISTER MANUAL ERROR:', err);
+      return response.error(res, err, 'Gagal mendaftar');
+    }
   }
 };
 

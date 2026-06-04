@@ -13,6 +13,7 @@ const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20 });
 router.post('/login', loginLimiter, AuthController.login);
 router.post('/google', AuthController.googleAuth);
 router.post('/register-google', AuthController.registerGoogle);
+router.post('/register', AuthController.registerManual);
 
 // Protected
 router.get('/profile', authMiddleware(), tenantResolver, AuthController.getProfile);
