@@ -52,6 +52,53 @@ const OwnerController = {
       console.error('UPDATE OWNER ERROR:', err);
       return response.error(res, err, 'Gagal update data owner');
     }
+  },
+
+  /* =====================================================
+     UPDATE OWNER PASSWORD
+  ===================================================== */
+  async updatePassword(req, res) {
+    try {
+      const { old_password, new_password } = req.body;
+      const user_id = req.user.id;
+
+      if (!old_password || !new_password) {
+        return response.badRequest(res, 'Password lama dan baru harus diisi');
+      }
+
+      // Ambil data user saat ini dari DB master
+      const master = require('../config/knexMaster');
+      const bcrypt = require('bcryptjs');
+      const user = await master('users').where({ id: user_id }).first();
+      
+      if (!user) return response.notFound(res, 'User tidak ditemukan');
+
+      // Validasi password lama
+      const valid = await bcrypt.compare(old_password, user.password);
+      if (!valid) {
+        return response.error(res, null, 'Password lama tidak sesuai', 400);
+      }
+
+      // Hash password baru dan simpan
+      const hashedPassword = await bcrypt.hash(new_password, 10);
+      await master('users').where({ id: user_id }).update({ password: hashedPassword });
+
+      // Catat log
+      if (req.db) {
+        const ActivityLogModel = require('../models/activityLog.model');
+        await ActivityLogModel.create(req.db, {
+          user_id: user_id,
+          store_id: req.user.store_id || null,
+          action: 'update_password',
+          detail: 'Owner mengubah password akunnya'
+        });
+      }
+
+      return response.success(res, null, 'Password berhasil diperbarui');
+    } catch (err) {
+      console.error('UPDATE PASSWORD ERROR:', err);
+      return response.error(res, err, 'Gagal mengupdate password');
+    }
   }
 };
 
