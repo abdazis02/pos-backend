@@ -109,7 +109,13 @@ const StoreController = {
       if (!!value.midtrans_merchan_id) updateData.midtrans_merchan_id = value.midtrans_merchan_id;
       if (!!value.midtrans_client_key) updateData.midtrans_client_key = value.midtrans_client_key;
       if (!!value.midtrans_server_key) updateData.midtrans_server_key = value.midtrans_server_key;
-      if (!!value.logo_url) updateData.logo_url = value.logo_url;
+      
+      // Jika request meminta hapus logo
+      if (req.body.remove_logo === 'true' || req.body.remove_logo === true) {
+        updateData.logo_url = null;
+      } else if (!!value.logo_url) {
+        updateData.logo_url = value.logo_url;
+      }
 
       if (Object.keys(updateData).length === 0) {
         return response.badRequest(res, 'Tidak ada data yang diupdate');
@@ -128,7 +134,7 @@ const StoreController = {
         detail: 'Update pengaturan toko'
       });
 
-      if (storeExists.logo_url && updateData.logo_url && storeExists.logo_url != updateData.logo_url) {
+      if (storeExists.logo_url && updateData.logo_url !== undefined && storeExists.logo_url != updateData.logo_url) {
         remove(storeExists.logo_url);
       }
 
