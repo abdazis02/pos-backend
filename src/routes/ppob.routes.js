@@ -68,8 +68,4 @@ router.post(
   PPOBController.syncProducts
 );
 
-// 🛠️ TOMBOL RAHASIA UNTUK MEMPERBAIKI REFUND NYANGKUT
-// Bisa diakses melalui browser: http://domain-anda/api/ppob/fix-refunds
-router.get('/fix-refunds', PPOBController.fixMissingRefunds);
-
 module.exports = router;

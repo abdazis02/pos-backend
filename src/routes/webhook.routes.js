@@ -8,4 +8,8 @@ router.post(
   PPOBController.digiflazzWebhook
 );
 
+// 🛠️ TOMBOL RAHASIA UNTUK MEMPERBAIKI REFUND NYANGKUT
+// Bisa diakses melalui browser: http://domain-anda/api/webhook/fix-refunds
+router.get('/webhook/fix-refunds', PPOBController.fixMissingRefunds);
+
 module.exports = router;
