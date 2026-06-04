@@ -371,8 +371,8 @@ const PPOBController = {
           updated_at: new Date()
         });
 
-      // 🔁 Refund saldo bila transaksi gagal (hanya saat transisi dari pending)
-      if (normalizedStatus === 'failed' && prevOrder && prevOrder.status === 'pending') {
+      // 🔁 Refund saldo bila transaksi gagal (asalkan belum pernah di-refund)
+      if (normalizedStatus === 'failed' && prevOrder && prevOrder.status !== 'failed') {
         await refundPpobOrder(parsed.tenant_id, prevOrder.id, ref_id);
       }
 
@@ -611,8 +611,8 @@ const PPOBController = {
           updated_at: new Date(),
         });
 
-      // 🔁 Refund jika gagal (transisi dari pending)
-      if (newStatus === 'failed' && prevStatus === 'pending') {
+      // 🔁 Refund jika gagal (asalkan belum di-refund)
+      if (newStatus === 'failed' && prevStatus !== 'failed') {
         await refundPpobOrder(req.user.tenant_id, order.id, ref_id);
       }
 
