@@ -14,6 +14,8 @@ const { getTenantApi } = require('../utils/midtrans');
 const { pageValidations } = require('../validations/page.validation');
 const { getTenantConnection } = require('../config/knexTenant');
 const { calculateBundlePrice } = require('../utils/pricing');
+const ProductRecipeModel = require('../models/productRecipe.model');
+const IngredientModel = require('../models/ingredient.model');
 
 function mapTransactionToFrontend(tx, owner_id, items = []) {
   const seg1 = owner_id.toString().padStart(2, '0')
@@ -280,6 +282,28 @@ const TransactionController = {
 
           return response.badRequest(res, 'Insufficient stock');
         }
+      }
+
+      // 🍳 Potong stok BAHAN BAKU sesuai resep menu (khusus F&B).
+      // Non-blocking: kegagalan di sini TIDAK membatalkan transaksi penjualan.
+      try {
+        const soldQty = {};
+        for (const item of processedItems) {
+          soldQty[item.product_id] = (soldQty[item.product_id] || 0) + Number(item.qty || 0);
+        }
+        const productIds = Object.keys(soldQty).map((id) => parseInt(id));
+        const recipes = await ProductRecipeModel.getByProductIds(trxTenant, store_id, productIds);
+        // Akumulasi pemakaian per bahan: takaran × jumlah menu terjual.
+        const usage = {};
+        for (const r of recipes) {
+          const used = parseFloat(r.quantity || 0) * (soldQty[r.product_id] || 0);
+          if (used > 0) usage[r.ingredient_id] = (usage[r.ingredient_id] || 0) + used;
+        }
+        for (const [ingredientId, amount] of Object.entries(usage)) {
+          await IngredientModel.consumeStock(trxTenant, store_id, parseInt(ingredientId), amount);
+        }
+      } catch (recipeErr) {
+        console.error('⚠️ [Recipe] Gagal potong stok bahan (transaksi tetap lanjut):', recipeErr.message);
       }
 
       const txRow = await TransactionModel.findTransactionById(trxTenant, store_id, transaction_id);

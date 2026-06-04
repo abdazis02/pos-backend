@@ -95,7 +95,21 @@ const WalletTopupController = {
     } catch (e) {
       await trx.rollback();
 
-      return response.error(res, e, 'Server error');
+      // Surface penyebab asli (umumnya error dari Midtrans QRIS, mis. batas nominal)
+      // agar tidak tertutup "Server error" generik. Detail penuh dicatat ke log.
+      const api = e?.ApiResponse || {};
+      const detail = (Array.isArray(api.error_messages) && api.error_messages.length)
+        ? api.error_messages.join('; ')
+        : (api.status_message || e?.message || 'Gagal membuat topup, coba lagi');
+      console.error('❌ TOPUP ERROR:', {
+        amount: value?.amount,
+        method: value?.payment_method,
+        httpStatus: e?.httpStatusCode,
+        detail,
+        api,
+      });
+
+      return response.error(res, e, detail);
     }
   },
 

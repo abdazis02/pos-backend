@@ -4,13 +4,9 @@ const storeValidations = Joi.object({
   name: Joi.string().required().trim(),
   business_category: Joi.string().trim().valid(
     'ritel_minimarket',
-    'konter_elektronik',
     'makanan_minuman',
-    'jasa_agen',
-    'fashion_aksesoris',
     'kesehatan_kecantikan',
-    'otomotif_bengkel',
-    'distributor_grosir',
+    'jasa_agen',
     'lainnya'
   ).allow(null, ''),
   address: Joi.string().trim().allow(null, ''),

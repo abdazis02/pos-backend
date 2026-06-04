@@ -5,15 +5,11 @@ const OwnerValidation = Joi.object({
   // 🔥 Tambahkan business_category di sini
   business_category: Joi.string().trim().valid(
     'ritel_minimarket',
-    'konter_elektronik',
     'makanan_minuman',
-    'jasa_agen',
-    'fashion_aksesoris',
     'kesehatan_kecantikan',
-    'otomotif_bengkel',
-    'distributor_grosir',
+    'jasa_agen',
     'lainnya'
-  ).optional(), 
+  ).optional(),
   email: Joi.string().trim().required().email(),
   phone: Joi.string().trim().allow(null, ''),
   address: Joi.string().trim().allow(null, '')

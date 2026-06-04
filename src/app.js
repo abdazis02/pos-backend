@@ -19,6 +19,7 @@ const tableRoutes = require('./routes/table.routes'); // 🔥
 const walletTransactionRoutes = require('./routes/walletTransaction.routes');
 const productReturnRoutes = require('./routes/productReturn.routes');
 const ppobRoutes = require('./routes/ppob.routes');
+const recipeRoutes = require('./routes/recipe.routes'); // Bahan baku & resep (F&B)
 const webhookRoutes = require('./routes/webhook.routes');
 // ⛔ DINONAKTIFKAN: const syncRoutes = require('./routes/sync.routes'); — lihat catatan di bawah
 const superadminRoutes = require('./routes/superadminRoutes');
@@ -61,6 +62,7 @@ app.use('/api/owner', ownerRoutes);
 app.use('/api/stores', tableRoutes); // 🔥
 app.use('/api/wallet', walletTransactionRoutes);
 app.use('/api/stores', ppobRoutes);
+app.use('/api/stores', recipeRoutes);
 // webhookRoutes sudah dipindah ke atas (sebelum express.json())
 // ⛔ DINONAKTIFKAN (keamanan): /sync tanpa autentikasi, membocorkan data (termasuk hash
 // password), dan skemanya usang (`pool` tak terdefinisi). Sinkronisasi offline aplikasi memakai
