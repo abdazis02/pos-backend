@@ -18,19 +18,29 @@ function runCommand(command) {
   });
 }
 
-// Konfigurasi Google Drive API
-const KEYFILEPATH = path.join(__dirname, '../credentials.json');
-const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
+// Konfigurasi Google Drive API (Metode OAuth2)
+const CREDENTIALS_PATH = path.join(__dirname, '../client_secret.json');
+const TOKEN_PATH = path.join(__dirname, '../token.json');
 
 async function getDriveService() {
-  if (!fs.existsSync(KEYFILEPATH)) {
-    throw new Error("File credentials.json tidak ditemukan! Silakan buat Service Account Google dan letakkan file-nya di folder pos-backend.");
+  if (!fs.existsSync(CREDENTIALS_PATH)) {
+    throw new Error("❌ File client_secret.json tidak ditemukan di folder utama pos-backend.");
   }
-  const auth = new google.auth.GoogleAuth({
-    keyFile: KEYFILEPATH,
-    scopes: SCOPES,
-  });
-  return google.drive({ version: 'v3', auth });
+  if (!fs.existsSync(TOKEN_PATH)) {
+    throw new Error("❌ File token.json tidak ditemukan! Anda harus menjalankan 'node scripts/get_token.js' satu kali saja.");
+  }
+
+  const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, 'utf-8'));
+  const { client_secret, client_id, redirect_uris } = credentials.installed || credentials.web;
+  
+  const redirectUri = (redirect_uris && redirect_uris.length > 0) ? redirect_uris[0] : 'urn:ietf:wg:oauth:2.0:oob';
+  const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirectUri);
+
+  const token = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf-8'));
+  oAuth2Client.setCredentials(token);
+
+  // oAuth2Client otomatis akan menyegarkan (refresh) token jika kedaluwarsa.
+  return google.drive({ version: 'v3', auth: oAuth2Client });
 }
 
 // Fungsi untuk membaca daftar Database Tenant + Master
