@@ -44,6 +44,12 @@ const PPOBProductModel = {
     const trx = await master.transaction();
     try {
       console.log(`💾 Memulai Sinkronisasi Database (${products.length} produk)...`);
+
+      // 🔥 LANGKAH KRITIS: Matikan SEMUA produk terlebih dahulu.
+      // Produk yang masih aktif di seller baru akan dihidupkan kembali oleh upsert di bawah.
+      // Produk dari seller LAMA yang tidak ada di seller baru akan tetap mati (is_active = 0).
+      await trx('ppob_products').update({ is_active: false });
+
       for (const product of products) {
         const isPostpaid = product.type === 'postpaid';
 
