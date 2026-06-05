@@ -6,6 +6,7 @@ const master = require('./config/knexMaster');
 const { getTenantConnection } = require('./config/knexTenant');
 const { startPpobSyncJob } = require('./jobs/ppobSync.job');
 const { startMonthlyFeeJob } = require('./jobs/monthlyFee.job');
+const { startBackupJob } = require('./jobs/backup.job');
 
 const PORT = process.env.PORT || 5000;
 
@@ -38,4 +39,7 @@ server.listen(PORT, async () => {
 
     // 💳 Mulai job potong biaya admin bulanan (Rp 10.000 tiap tanggal 1)
     startMonthlyFeeJob();
+
+    // 💾 Mulai robot penjadwal backup database harian ke Google Drive
+    startBackupJob();
 });
