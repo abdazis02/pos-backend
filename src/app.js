@@ -128,6 +128,15 @@ app.use('*', (req, res) => {
 
 // Error handler
 app.use((err, req, res, next) => {
+    // Tangkap error upload khusus agar tidak memuntahkan stack trace yang menakutkan
+    if (err.message === 'File harus berupa gambar' || err.name === 'MulterError') {
+        console.error(`⚠️ Peringatan Upload: ${err.message}`);
+        return res.status(400).json({
+            success: false,
+            message: err.message
+        });
+    }
+
     console.error(err.stack);
     res.status(500).json({
         success: false,
