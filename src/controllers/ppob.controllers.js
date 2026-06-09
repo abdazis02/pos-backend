@@ -48,6 +48,29 @@ function isSuccessfulDigiflazzData(data) {
   return rc === '00' || status === 'sukses' || status === 'success' || status === '1';
 }
 
+function normalizeProductBrand(brand) {
+  return String(brand || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function getEmoneyBrandAliases(brand) {
+  switch (normalizeProductBrand(brand)) {
+    case 'ISAKU':
+      return ['i.saku', 'I.SAKU', 'ISAKU', 'I SAKU'];
+    case 'LINKAJA':
+      return ['LinkAja', 'LINKAJA', 'LINK AJA'];
+    case 'GOPAY':
+      return ['GoPay', 'GO PAY', 'GOPAY'];
+    case 'SHOPEEPAY':
+      return ['ShopeePay', 'SHOPEE PAY', 'SHOPEEPAY'];
+    case 'DANA':
+      return ['DANA'];
+    case 'OVO':
+      return ['OVO'];
+    default:
+      return brand ? [brand] : [];
+  }
+}
+
 function getDigiflazzWebhookSecret() {
   const raw = process.env.DIGIFLAZZ_WEBHOOK_SECRET || process.env.DIGIFLAZZ_API_KEY || '';
   return raw.replace(/^["']|["']$/g, '').trim();
@@ -423,10 +446,11 @@ const PPOBController = {
         .update({ is_active: 1 })
         .catch(e => console.error("Auto-fix is_active error:", e));
 
-      let { category, force_sync } = req.query;
+      let { category, force_sync, brand } = req.query;
 
       let searchCategory = category;
       let searchType = undefined;
+      let brandAliases = [];
 
       const lowerCat = String(category || '').toLowerCase();
 
@@ -447,14 +471,22 @@ const PPOBController = {
         searchCategory = 'MULTIFINANCE';
       } else if (lowerCat.includes('internet')) {
         searchCategory = 'INTERNET PASCABAYAR';
+      } else if (lowerCat.includes('e-money bebas') || lowerCat.includes('emoney bebas')) {
+        searchCategory = 'E-Money';
+        searchType = 'postpaid';
       } else if (lowerCat.includes('e-money')) {
         searchCategory = 'E-Money';
         searchType = 'prepaid';
       }
 
+      if (brand) {
+        brandAliases = getEmoneyBrandAliases(brand);
+      }
+
       let products = await PPOBProductModel.getAllProducts({
         category: searchCategory || undefined,
-        type: searchType
+        type: searchType,
+        brandAliases
       });
 
       if (products.length === 0 || force_sync === 'true') {
@@ -473,7 +505,8 @@ const PPOBController = {
 
             products = await PPOBProductModel.getAllProducts({
               category: searchCategory || undefined,
-              type: searchType
+              type: searchType,
+              brandAliases
             });
             console.log(`✅ Sinkronisasi Selesai. Filter [Cat: ${searchCategory}, Type: ${searchType}] menghasilkan ${products.length} produk.`);
           }

@@ -1,5 +1,18 @@
 const master = require('../config/knexMaster');
 
+const EMONEY_BRANDS = new Set([
+  'DANA',
+  'GOPAY',
+  'OVO',
+  'SHOPEEPAY',
+  'LINKAJA',
+  'ISAKU',
+]);
+
+function normalizeBrand(brand) {
+  return String(brand || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
 const PPOBProductModel = {
   async getAllProducts(filters = {}) {
     // 1. Ambil semua layanan yang sedang DIMATIKAN (is_active = 0) dari web
@@ -37,6 +50,15 @@ const PPOBProductModel = {
       });
     }
 
+    if (Array.isArray(filters.brandAliases) && filters.brandAliases.length > 0) {
+      query = query.andWhere(function() {
+        for (const alias of filters.brandAliases) {
+          this.orWhere('brand', 'like', `%${alias}%`)
+              .orWhere('product_name', 'like', `%${alias}%`);
+        }
+      });
+    }
+
     return query.orderBy('price', 'asc').orderBy('product_name', 'asc');
   },
 
@@ -58,7 +80,7 @@ const PPOBProductModel = {
         if (!sku) continue;
 
         let category = product.category;
-        if (isPostpaid && ['DANA', 'GOPAY', 'OVO', 'SHOPEE PAY', 'LINKAJA'].includes(String(product.brand).toUpperCase())) {
+        if (EMONEY_BRANDS.has(normalizeBrand(product.brand))) {
           category = 'E-Money';
         }
 
