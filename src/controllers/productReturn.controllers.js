@@ -32,10 +32,11 @@ const ProductReturnController = {
       }
 
       const { store_id } = req.params;
+      const storeIdInt = parseInt(store_id);
       const offset = (value.page - 1) * value.itemsPerPage;
 
       const [returns, total, filtered] = await Promise.all(
-        ProductReturnModel.paginateReturns(req.db, store_id, offset, value.itemsPerPage, {
+        ProductReturnModel.paginateReturns(req.db, storeIdInt, offset, value.itemsPerPage, {
           status: value.status,
           search: value.q
         })
@@ -93,10 +94,11 @@ const ProductReturnController = {
       }
 
       const { store_id } = req.params;
+      const storeIdInt = parseInt(store_id);
       const { product_id, quantity, note } = value;
 
       // Verify product exists
-      const product = await ProductModel.findProductById(req.db, store_id, product_id);
+      const product = await ProductModel.findProductById(req.db, storeIdInt, product_id);
       if (!product) {
         return response.notFound(res, 'Produk tidak ditemukan');
       }
@@ -114,7 +116,7 @@ const ProductReturnController = {
 
       // Create return record
       const returnData = {
-        store_id,
+        store_id: storeIdInt,
         product_id,
         quantity,
         note: note || null,
