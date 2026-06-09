@@ -108,11 +108,10 @@ const TransactionModel = {
     return db("transactions").where("store_id", store_id).whereIn("id", ids).delete()
   },
 
-  // Update data refund transaksi. payment_status dikirim oleh pemanggil
-  // ('refunded' bila penuh, tetap 'paid' bila masih sebagian) — default 'refunded'.
+  // Update status transaksi menjadi refunded
   refundTransaction(db, store_id, id, data) {
     data.updated_at = db.fn.now();
-    if (!data.payment_status) data.payment_status = 'refunded';
+    data.payment_status = 'refunded';
     return db("transactions").where({ store_id, id }).update(data);
   },
 
