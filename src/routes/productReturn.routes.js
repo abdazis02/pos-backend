@@ -36,7 +36,7 @@ router.get(
 // Create new return request
 router.post(
   '/:store_id/returns',
-  authMiddleware(['owner', 'admin']),
+  authMiddleware(['owner', 'admin', 'cashier']),
   tenantResolver,
   checkStore,
   upload.array('photos', 5), // Support max 5 photos

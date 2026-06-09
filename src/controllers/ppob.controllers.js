@@ -160,12 +160,13 @@ const PPOBController = {
       const duplicateCheck = await trxTenant('ppob_orders')
         .where({ store_id, customer_no: value.customer_no, buyer_sku_code: value.buyer_sku_code })
         .whereRaw('created_at > NOW() - INTERVAL 2 MINUTE')
+        .whereIn('status', ['pending', 'success']) // 🔥 HANYA BLOKIR JIKA MASIH PENDING ATAU SUDAH SUKSES
         .first();
 
       if (duplicateCheck) {
         await trxMaster.rollback();
         await trxTenant.rollback();
-        return response.badRequest(res, 'Transaksi sedang diproses. Mohon tunggu 2 menit untuk mencoba nomor yang sama.');
+        return response.badRequest(res, `Transaksi untuk nomor ${value.customer_no} sedang dalam proses atau sudah berhasil. Mohon tunggu sejenak.`);
       }
 
       const owner = await OwnerModel.getByTenantId(tenant_id);
@@ -255,10 +256,16 @@ const PPOBController = {
         sale_price: value.sale_price,
         status: (() => {
           const rc = String(result?.rc || '');
-          if (rc === '00') return 'success';       
-          if (rc === '03') return 'pending';        
-          if (['06','07','08','09'].includes(rc)) return 'failed'; 
-          return result?.status === 'Sukses' ? 'success' : 'pending';
+          const statusLower = String(result?.status || '').toLowerCase();
+
+          if (rc === '00' || statusLower === 'sukses') return 'success';
+          if (rc === '03' || statusLower === 'pending' || statusLower === 'proses') return 'pending';
+
+          // Jika ada RC tapi bukan sukses/pending, atau status eksplisit gagal
+          if (rc.length > 0 || statusLower === 'gagal') return 'failed';
+
+          // Default ke pending jika respon tidak jelas (aman untuk saldo)
+          return 'pending';
         })(),
         response: JSON.stringify(result),
         created_at: req.db.fn.now(),
