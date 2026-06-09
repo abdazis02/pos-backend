@@ -15,6 +15,13 @@ function buildSignature({ username, ref_id = '', tr_id = '' }) {
     .digest('hex');
 }
 
+function buildCustomerNoSignature(customer_no) {
+  return crypto
+    .createHash('md5')
+    .update(`${DIGIFLAZZ_USERNAME}${DIGIFLAZZ_API_KEY}${customer_no}`)
+    .digest('hex');
+}
+
 function sendDigiflazzRequest(path, payload) {
   if (!DIGIFLAZZ_USERNAME || !DIGIFLAZZ_API_KEY) {
     throw new Error('Digiflazz credentials belum diset di environment variables');
@@ -160,7 +167,21 @@ async function checkInquiry({ buyer_sku_code, customer_no, ref_id }) {
 }
 
 /**
- * 🔥 Tambahan fungsi Cek Status Transaksi (Polling)
+ * Inquiry PLN prabayar untuk validasi ID meter / nomor pelanggan.
+ */
+async function checkPlnInquiry({ customer_no }) {
+  if (!customer_no) {
+    throw new Error('customer_no wajib diisi untuk inquiry PLN');
+  }
+
+  return sendDigiflazzRequest('inquiry-pln', {
+    customer_no,
+    sign: buildCustomerNoSignature(customer_no),
+  });
+}
+
+/**
+ * Cek Status Transaksi (Polling)
  */
 async function checkTransactionStatus(ref_id) {
   if (!ref_id) throw new Error('ref_id wajib diisi untuk cek status');
@@ -175,5 +196,6 @@ module.exports = {
   productList,
   getProductDetail,
   checkInquiry,
+  checkPlnInquiry,
   checkTransactionStatus, // 🔥 Export fungsi baru
 };

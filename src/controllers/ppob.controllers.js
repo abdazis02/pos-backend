@@ -31,6 +31,23 @@ function parseDigiflazzPrice(product) {
   return parseFloat(product?.price || product?.selling_price || product?.nominal || product?.harga || 0);
 }
 
+function isPlnPrepaidProduct(product) {
+  const text = [
+    product?.category,
+    product?.brand,
+    product?.product_name,
+    product?.buyer_sku_code,
+  ].join(' ').toLowerCase();
+
+  return product?.type === 'prepaid' && text.includes('pln');
+}
+
+function isSuccessfulDigiflazzData(data) {
+  const rc = String(data?.rc || '');
+  const status = String(data?.status || '').toLowerCase();
+  return rc === '00' || status === 'sukses' || status === 'success' || status === '1';
+}
+
 function getDigiflazzWebhookSecret() {
   const raw = process.env.DIGIFLAZZ_WEBHOOK_SECRET || process.env.DIGIFLAZZ_API_KEY || '';
   return raw.replace(/^["']|["']$/g, '').trim();
@@ -126,19 +143,27 @@ const PPOBController = {
       const { buyer_sku_code, customer_no } = req.body;
       const ref_id = `INQ-${req.user.tenant_id}-${Date.now()}`;
 
-      const result = await Digiflazz.checkInquiry({
-        buyer_sku_code,
-        customer_no,
-        ref_id
-      });
+      const product = await master('ppob_products')
+        .where('buyer_sku_code', buyer_sku_code)
+        .first();
 
-      if (String(result?.data?.rc) !== '00') {
-        return response.badRequest(res, result?.data?.message || 'Gagal cek tagihan');
+      const result = isPlnPrepaidProduct(product)
+        ? await Digiflazz.checkPlnInquiry({ customer_no })
+        : await Digiflazz.checkInquiry({
+            buyer_sku_code,
+            customer_no,
+            ref_id
+          });
+
+      const data = result?.data || result;
+
+      if (!isSuccessfulDigiflazzData(data)) {
+        return response.badRequest(res, data?.message || 'Gagal cek tagihan');
       }
 
-      return response.success(res, result.data, 'Tagihan berhasil ditemukan');
+      return response.success(res, data, 'Data pelanggan berhasil ditemukan');
     } catch (error) {
-      return response.error(res, error, 'Gagal melakukan inquiry pascabayar');
+      return response.error(res, error, 'Gagal melakukan inquiry PPOB');
     }
   },
 
