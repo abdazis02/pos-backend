@@ -543,6 +543,11 @@ const TransactionController = {
   // Refund transaksi
   async refund(req, res) {
     const trxTenant = await req.db.transaction();
+    const trxMaster = await master.transaction();
+    const rollbackAll = async () => {
+      try { await trxTenant.rollback(); } catch (_) {}
+      try { await trxMaster.rollback(); } catch (_) {}
+    };
     try {
       const { store_id, id } = req.params;
       const { tenant_id, id: userId } = req.user;
@@ -550,66 +555,87 @@ const TransactionController = {
       // Validasi input
       const { value, error } = refundValidations.validate(req.body);
       if (error) {
-        await trxTenant.rollback();
+        await rollbackAll();
         return response.badRequest(res, error.message, error.details);
       }
 
       const { reason, refund_items } = value;
 
-      // Pastikan transaksi ada dan belum refunded
       const transaction = await TransactionModel.findTransactionById(trxTenant, store_id, id);
       if (!transaction) {
-        await trxTenant.rollback();
+        await rollbackAll();
         return response.notFound(res, 'Transaksi tidak ditemukan');
       }
 
+      // Hanya transaksi sudah dibayar & belum di-refund PENUH yang boleh di-refund.
       if (transaction.payment_status === 'refunded') {
-        await trxTenant.rollback();
-        return response.badRequest(res, 'Transaksi sudah di-refund');
+        await rollbackAll();
+        return response.badRequest(res, 'Transaksi sudah di-refund penuh');
       }
-
       if (transaction.payment_status !== 'paid') {
-        await trxTenant.rollback();
+        await rollbackAll();
         return response.badRequest(res, 'Hanya transaksi yang sudah dibayar dapat di-refund');
       }
 
-      // Get original transaction items
       const originalItems = await TransactionModel.getItemsByTransactionId(trxTenant, id);
-      
-      // Validate refund items against original
       const originalItemMap = Object.fromEntries(originalItems.map(i => [i.product_id, i]));
-      
+
+      // Qty yang SUDAH di-refund sebelumnya (refund_items disimpan kumulatif).
+      const prevRefunded = {};
+      if (transaction.refund_items) {
+        try {
+          const prev = typeof transaction.refund_items === 'string'
+            ? JSON.parse(transaction.refund_items)
+            : transaction.refund_items;
+          if (Array.isArray(prev)) {
+            for (const it of prev) {
+              prevRefunded[it.product_id] = (prevRefunded[it.product_id] || 0) + Number(it.qty || 0);
+            }
+          }
+        } catch (_) { /* abaikan JSON rusak */ }
+      }
+
+      // Validasi: qty refund baru tidak melebihi SISA (asli - sudah di-refund).
       for (const refundItem of refund_items) {
         const original = originalItemMap[refundItem.product_id];
         if (!original) {
-          await trxTenant.rollback();
+          await rollbackAll();
           return response.badRequest(res, `Produk dengan ID ${refundItem.product_id} tidak ada dalam transaksi`);
         }
-        if (refundItem.qty > original.qty) {
-          await trxTenant.rollback();
-          return response.badRequest(res, `Jumlah refund untuk produk ${original.product_name} melebihi jumlah pembelian`);
+        const sisa = Number(original.qty) - (prevRefunded[refundItem.product_id] || 0);
+        if (refundItem.qty > sisa) {
+          await rollbackAll();
+          return response.badRequest(res, `Jumlah refund untuk produk ${original.product_name} melebihi sisa yang bisa di-refund (${sisa})`);
         }
       }
 
-      // Hitung jumlah refund
+      // Jumlah refund batch ini.
       let refundTotal = 0;
       for (const refundItem of refund_items) {
         const original = originalItemMap[refundItem.product_id];
-        const ratio = refundItem.qty / original.qty;
-        refundTotal += original.subtotal * ratio;
+        const ratio = refundItem.qty / Number(original.qty);
+        refundTotal += Number(original.subtotal) * ratio;
       }
 
-      // Update transaction status to refunded
+      // Gabungkan jadi refund kumulatif & cek apakah sudah penuh.
+      const cumulative = { ...prevRefunded };
+      for (const refundItem of refund_items) {
+        cumulative[refundItem.product_id] = (cumulative[refundItem.product_id] || 0) + Number(refundItem.qty);
+      }
+      const cumulativeItems = Object.entries(cumulative).map(([pid, qty]) => ({ product_id: Number(pid), qty }));
+      const fullyRefunded = originalItems.every(oi => (cumulative[oi.product_id] || 0) >= Number(oi.qty));
+      const newRefundAmount = Number(transaction.refund_amount || 0) + refundTotal;
+
       await TransactionModel.refundTransaction(trxTenant, store_id, id, {
         notes: transaction.notes ? `${transaction.notes} | Refund: ${reason}` : `Refund: ${reason}`,
-        refund_amount: refundTotal,
-        refund_items: JSON.stringify(refund_items),
+        refund_amount: newRefundAmount,
+        refund_items: JSON.stringify(cumulativeItems),
         refunded_by: userId,
-        refunded_at: trxTenant.fn.now()
+        refunded_at: trxTenant.fn.now(),
+        payment_status: fullyRefunded ? 'refunded' : 'paid',
       });
 
-      // Restore product stock (cek without_stock dari tabel produk, bukan dari item transaksi
-      // yang tidak punya kolom tersebut)
+      // Kembalikan stok produk (batch ini).
       for (const refundItem of refund_items) {
         const prod = await trxTenant('products')
           .where({ store_id, id: refundItem.product_id })
@@ -619,19 +645,73 @@ const TransactionController = {
         }
       }
 
+      // 🍳 Kembalikan stok BAHAN BAKU sesuai resep (F&B) — non-blocking.
+      try {
+        const productIds = refund_items.map(r => r.product_id);
+        const recipes = await ProductRecipeModel.getByProductIds(trxTenant, store_id, productIds);
+        const qtyMap = {};
+        for (const r of refund_items) qtyMap[r.product_id] = (qtyMap[r.product_id] || 0) + Number(r.qty);
+        const usage = {};
+        for (const rc of recipes) {
+          const back = parseFloat(rc.quantity || 0) * (qtyMap[rc.product_id] || 0);
+          if (back > 0) usage[rc.ingredient_id] = (usage[rc.ingredient_id] || 0) + back;
+        }
+        for (const [ingredientId, amount] of Object.entries(usage)) {
+          await IngredientModel.addStock(trxTenant, store_id, parseInt(ingredientId), amount);
+        }
+      } catch (recipeErr) {
+        console.error('⚠️ [Recipe] Gagal kembalikan stok bahan saat refund:', recipeErr.message);
+      }
+
+      // 💰 Saat refund PENUH, kembalikan fee transaksi ke saldo owner (reverse fee penjualan).
+      let feeReturned = 0;
+      if (fullyRefunded) {
+        const owner = await OwnerModel.getByTenantId(tenant_id);
+        if (owner) {
+          const feeCharge = await trxMaster('wallet_transactions')
+            .where({ owner_id: owner.id, reference_type: 'transactions', reference_id: Number(id), type: 'transaction_fee' })
+            .where('amount', '<', 0)
+            .first();
+          if (feeCharge) {
+            const feeAmount = Math.abs(parseFloat(feeCharge.amount || 0));
+            if (feeAmount > 0) {
+              const before = await OwnerModel.getBalanceByTenant(trxMaster, tenant_id);
+              const after = parseFloat(before || 0) + feeAmount;
+              await WalletTransaction.createTransaction(trxMaster, {
+                owner_id: owner.id,
+                type: 'transaction_fee',
+                amount: feeAmount, // positif = kredit (pengembalian)
+                balance_after: after,
+                reference_type: 'transactions',
+                reference_id: Number(id),
+                description: `Refund fee transaksi ${id?.toString().padStart(6, '0')}`,
+              });
+              await OwnerModel.addBalance(trxMaster, owner.id, feeAmount);
+              feeReturned = feeAmount;
+            }
+          }
+        }
+      }
+
       await trxTenant.commit();
+      await trxMaster.commit();
 
       // Log activity
       await ActivityLogModel.create(req.db, {
         user_id: userId,
         store_id: store_id,
         action: 'refund_transaction',
-        detail: `Refund transaksi ID ${id}, jumlah: ${refundTotal}`
+        detail: `Refund transaksi ID ${id}, jumlah: ${refundTotal}${fullyRefunded ? ' (penuh, fee dikembalikan)' : ' (sebagian)'}`
       });
 
-      return response.success(res, { refund_amount: refundTotal }, 'Refund berhasil');
+      return response.success(res, {
+        refund_amount: refundTotal,
+        total_refunded: newRefundAmount,
+        fully_refunded: fullyRefunded,
+        fee_returned: feeReturned,
+      }, fullyRefunded ? 'Refund penuh berhasil' : 'Refund sebagian berhasil');
     } catch (error) {
-      await trxTenant.rollback();
+      await rollbackAll();
       console.error('Refund transaction error:', error);
       return response.error(res, error, 'Terjadi kesalahan saat melakukan refund');
     }
