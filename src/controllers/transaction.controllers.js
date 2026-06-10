@@ -59,6 +59,7 @@ function mapTransactionToFrontend(tx, owner_id, items = []) {
 
 const validation = pageValidations.keys({
   payment_status: Joi.string().valid('pending', 'paid', 'canceled', 'refunded').allow(null, ''),
+  payment_method: Joi.string().valid('cash', 'qris', 'qris_static').allow(null, ''),
   start_date: Joi.date().iso().allow(null, ''),
   end_date: Joi.date().iso().min(Joi.ref('start_date')).allow(null, '')
 })

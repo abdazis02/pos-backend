@@ -31,6 +31,10 @@ const TransactionModel = {
       transactions.where("payment_status", filters.payment_status)
     }
 
+    if (!!filters.payment_method) {
+      transactions.where("payment_method", filters.payment_method)
+    }
+
     if (!!filters.start_date && !!filters.end_date) {
       transactions.whereRaw(
         't.created_at BETWEEN ? AND ?',
