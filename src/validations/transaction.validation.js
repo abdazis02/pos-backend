@@ -9,6 +9,7 @@ const transactionItemSchema = Joi.object({
 
 const transactionValidations = Joi.object({
   payment_method: Joi.string().required().valid('cash', 'qris', 'qris_static'),
+  payment_status: Joi.string().valid('pending', 'paid').default('paid'),
   received_amount: Joi.when('payment_method', {
     not: 'qris',
     then: Joi.number().min(0).required(),
@@ -44,4 +45,9 @@ const refundValidations = Joi.object({
     .required()
 });
 
-module.exports = { transactionValidations, refundValidations };
+const payLaterValidations = Joi.object({
+  payment_method: Joi.string().required().valid('cash'),
+  received_amount: Joi.number().min(0).required(),
+});
+
+module.exports = { transactionValidations, refundValidations, payLaterValidations };

@@ -41,6 +41,15 @@ router.get(
   TransactionController.detail
 );
 
+// Pay pending dine-in transaction (protected route)
+router.post(
+  '/:store_id/transactions/:id/pay',
+  authMiddleware(['owner', 'admin', 'cashier']),
+  tenantResolver,
+  checkStore,
+  TransactionController.payLater
+);
+
 // Update Transaction (protected route)
 router.put(
   '/:store_id/transactions/:id',

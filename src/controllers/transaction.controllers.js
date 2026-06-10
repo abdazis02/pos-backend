@@ -6,9 +6,10 @@ const StoreModel = require('../models/store.model');
 const OwnerModel = require('../models/owner.model');
 const ProductModel = require('../models/product.model');
 const TransactionModel = require('../models/transaction.model');
+const TableModel = require('../models/table.model');
 const ActivityLogModel = require('../models/activityLog.model');
 const WalletTransaction = require('../models/walletTransaction.model');
-const { transactionValidations, refundValidations } = require('../validations/transaction.validation');
+const { transactionValidations, refundValidations, payLaterValidations } = require('../validations/transaction.validation');
 const { getIO } = require('../socket');
 const { getTenantApi } = require('../utils/midtrans');
 const { pageValidations } = require('../validations/page.validation');
@@ -46,11 +47,12 @@ function mapTransactionToFrontend(tx, owner_id, items = []) {
       name: item.product_name,
       sku: item.sku,
       price: item.price,
-      quantity: item.quantity,
+      quantity: item.quantity ?? item.qty,
       lineTotal: item.subtotal,
       discount_type: item.discount_type,
       discount_value: item.discount_value,
-      discount_amount: item.discount_amount
+      discount_amount: item.discount_amount,
+      notes: item.notes
     }))
   };
 }
@@ -121,7 +123,7 @@ const TransactionController = {
         return response.badRequest(res, error.message, error.details);
       }
 
-      const { payment_method, received_amount, notes, items, created_at, table_id } = value;
+      const { payment_method, payment_status, received_amount, notes, items, created_at, table_id } = value;
 
       // Verifikasi item transaksi
       let grossSubtotal = 0;    // total harga sebelum diskon
@@ -234,16 +236,27 @@ const TransactionController = {
       const netSubtotal = grossSubtotal - discountTotal;
       const tax = netSubtotal * (taxPercentage / 100);
       const grandTotal = netSubtotal + tax;
+      const isPayLater = payment_method === 'cash' && payment_status === 'pending';
+      const paidReceivedAmount = Number(received_amount || 0);
+
+      if (isPayLater && String(store?.business_category || '').toLowerCase() !== 'makanan_minuman') {
+        await trxMaster.rollback();
+        await trxTenant.rollback();
+
+        return response.badRequest(res, 'Bayar belakangan hanya tersedia untuk kategori F&B');
+      }
 
       // Memeriksa pembayaran
-      if (received_amount < grandTotal) {
+      if (!isPayLater && payment_method != 'qris' && paidReceivedAmount < grandTotal) {
         await trxMaster.rollback();
         await trxTenant.rollback();
 
         return response.badRequest(res, 'Insufficient payment amount');
       }
 
-      const changeAmountFinal = received_amount - grandTotal;
+      const changeAmountFinal = isPayLater || payment_method == 'qris'
+        ? 0
+        : paidReceivedAmount - grandTotal;
 
       // Membuat objek transaksi
       const transaction = {
@@ -252,12 +265,13 @@ const TransactionController = {
         table_id, // 🔥
         total_cost: grandTotal,
         payment_method,
-        received_amount: payment_method != 'qris' ? received_amount : 0,
-        change_amount: payment_method != 'qris' ? changeAmountFinal : 0,
-        payment_status: payment_method != 'qris' ? 'paid' : 'pending',
+        received_amount: payment_method != 'qris' && !isPayLater ? paidReceivedAmount : 0,
+        change_amount: payment_method != 'qris' && !isPayLater ? changeAmountFinal : 0,
+        payment_status: isPayLater ? 'pending' : (payment_method != 'qris' ? 'paid' : 'pending'),
         subtotal: netSubtotal,
         discount_total: discountTotal,
         tax,
+        notes,
       };
 
       // 🔥 TAMBAHKAN KODE INI AGAR WAKTU OFFLINE TERSIMPAN:
@@ -268,6 +282,9 @@ const TransactionController = {
       // Simpan transaksi dan item dalam transaksi
       const transaction_id = await TransactionModel.create(trxTenant, transaction);
       await TransactionModel.addItems(trxTenant, transaction_id, processedItems);
+      if (table_id && isPayLater) {
+        await TableModel.updateStatus(trxTenant, table_id, 'occupied', transaction_id);
+      }
 
       // Update stok produk
       for (const item of processedItems) {
@@ -406,6 +423,83 @@ const TransactionController = {
     } catch (error) {
       console.error('Update transaction error:', error);
       return response.error(res, error, 'Terjadi kesalahan saat mengupdate transaksi', 500);
+    }
+  },
+
+  async payLater(req, res) {
+    const trxTenant = await req.db.transaction();
+    try {
+      const { store_id, id } = req.params;
+      const { value, error } = payLaterValidations.validate(req.body);
+      if (error) {
+        await trxTenant.rollback();
+        return response.badRequest(res, error.message, error.details);
+      }
+
+      const transaction = await TransactionModel.findTransactionById(trxTenant, store_id, id);
+      if (!transaction) {
+        await trxTenant.rollback();
+        return response.notFound(res, 'Transaksi tidak ditemukan');
+      }
+
+      if (transaction.payment_status !== 'pending') {
+        await trxTenant.rollback();
+        return response.badRequest(res, 'Transaksi sudah dibayar atau tidak bisa dilunasi');
+      }
+
+      if (transaction.payment_method === 'qris') {
+        await trxTenant.rollback();
+        return response.badRequest(res, 'Transaksi QRIS pending harus diselesaikan dari callback pembayaran');
+      }
+
+      const totalCost = parseFloat(transaction.total_cost || 0);
+      const receivedAmount = parseFloat(value.received_amount || 0);
+      if (receivedAmount < totalCost) {
+        await trxTenant.rollback();
+        return response.badRequest(res, 'Uang pelanggan kurang');
+      }
+
+      const changeAmount = receivedAmount - totalCost;
+      const isUpdated = await TransactionModel.updateTransaction(trxTenant, store_id, id, {
+        payment_method: value.payment_method,
+        payment_status: 'paid',
+        received_amount: receivedAmount,
+        change_amount: changeAmount,
+      });
+      if (!isUpdated) {
+        await trxTenant.rollback();
+        return response.error(res, null, 'Gagal melunasi transaksi');
+      }
+
+      if (transaction.table_id) {
+        await trxTenant('restaurant_tables')
+          .where({ id: transaction.table_id })
+          .where((q) => q.where('current_transaction_id', id).orWhereNull('current_transaction_id'))
+          .update({
+            status: 'available',
+            current_transaction_id: null,
+            updated_at: trxTenant.fn.now(),
+          });
+      }
+
+      await ActivityLogModel.create(trxTenant, {
+        user_id: req.user.id,
+        store_id: store_id,
+        action: 'pay_later_paid',
+        detail: `Pelunasan transaksi ID ${id}, diterima: Rp${receivedAmount}`
+      });
+
+      const updatedTransaction = await TransactionModel.findTransactionById(trxTenant, store_id, id);
+      const items = await TransactionModel.getItemsByTransactionIds(trxTenant, [id]);
+      const mapped = mapTransactionToFrontend(updatedTransaction, req.user.tenant_id, items[id] || []);
+
+      await trxTenant.commit();
+
+      return response.success(res, mapped, 'Transaksi berhasil dilunasi');
+    } catch (error) {
+      await trxTenant.rollback();
+      console.error('Pay later transaction error:', error);
+      return response.error(res, error, 'Terjadi kesalahan saat melunasi transaksi');
     }
   },
 

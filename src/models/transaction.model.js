@@ -3,9 +3,10 @@ const TransactionModel = {
   paginateTransactions(db, store_id, offset, limit, filters) {
     const transactions = db("transactions as t")
       .join(process.env.DB_NAME + '.users as u', 'u.id', 't.user_id')
+      .leftJoin('restaurant_tables as rt', 'rt.id', 't.table_id')
       .where("t.store_id", store_id)
       .orderBy("t.created_at", "DESC")
-      .select('t.*', 'u.name as cashier')
+      .select('t.*', 'u.name as cashier', 'rt.table_number')
 
     const total = transactions.clone().clearSelect().count({ cnt: 't.id' }).first()
 
@@ -52,7 +53,7 @@ const TransactionModel = {
         'ti.transaction_id', 'ti.product_id', 'p.name as product_name', 'p.sku',
         'ti.price', 'ti.qty as quantity', 'ti.cost_price', 'ti.subtotal',
         'ti.discount_type', 'ti.discount_value', 'ti.discount_amount',
-        'ti.handled_by', 'u.name as handler_name', 'ti.commission_amount'
+        'ti.notes', 'ti.handled_by', 'u.name as handler_name', 'ti.commission_amount'
       )
 
     // PERBAIKAN: Mengganti Object.groupBy dengan reduce agar support semua versi Node.js
