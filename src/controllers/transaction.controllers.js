@@ -62,7 +62,7 @@ const validation = pageValidations.keys({
   payment_method: Joi.string().valid('cash', 'qris', 'qris_static').allow(null, ''),
   start_date: Joi.date().iso().allow(null, ''),
   end_date: Joi.date().iso().min(Joi.ref('start_date')).allow(null, '')
-}).unknown(true);
+})
 
 const TransactionController = {
   async list(req, res) {
@@ -240,25 +240,11 @@ const TransactionController = {
       const isPayLater = payment_method === 'cash' && payment_status === 'pending';
       const paidReceivedAmount = Number(received_amount || 0);
 
-      if (isPayLater) {
-        // 🔥 Penyelarasan Kategori F&B dengan Frontend
-        const storeCategory = String(store?.business_category || '').toLowerCase().trim();
-        const owner = await OwnerModel.getByTenantId(tenant_id);
-        const ownerCategory = String(owner?.business_category || '').toLowerCase().trim();
+      if (isPayLater && String(store?.business_category || '').toLowerCase() !== 'makanan_minuman') {
+        await trxMaster.rollback();
+        await trxTenant.rollback();
 
-        const effectiveCategory = storeCategory !== 'lainnya' && storeCategory !== ''
-          ? storeCategory
-          : ownerCategory;
-
-        const isFnb = [
-          'makanan_minuman', 'fnb', 'f&b', 'cafe', 'restoran', 'restaurant'
-        ].includes(effectiveCategory);
-
-        if (!isFnb) {
-          await trxMaster.rollback();
-          await trxTenant.rollback();
-          return response.badRequest(res, 'Bayar belakangan hanya tersedia untuk kategori F&B (Makanan & Minuman)');
-        }
+        return response.badRequest(res, 'Bayar belakangan hanya tersedia untuk kategori F&B');
       }
 
       // Memeriksa pembayaran
