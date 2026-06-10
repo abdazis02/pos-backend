@@ -28,11 +28,11 @@ const TransactionModel = {
     }
 
     if (!!filters.payment_status) {
-      transactions.where("payment_status", filters.payment_status)
+      transactions.where("t.payment_status", filters.payment_status)
     }
 
     if (!!filters.payment_method) {
-      transactions.where("payment_method", filters.payment_method)
+      transactions.where("t.payment_method", filters.payment_method)
     }
 
     if (!!filters.start_date && !!filters.end_date) {
@@ -49,6 +49,8 @@ const TransactionModel = {
   },
 
   async getItemsByTransactionIds(db, transactionIds) {
+    if (!transactionIds || transactionIds.length === 0) return {};
+
     const rows = await db("transaction_items as ti")
       .leftJoin("products as p", "p.id", "ti.product_id")
       .leftJoin(process.env.DB_NAME + '.users as u', 'u.id', 'ti.handled_by')

@@ -39,6 +39,12 @@ function mapTransactionToFrontend(tx, owner_id, items = []) {
     tax: tx.tax,
     tax_percentage: tx.tax_percentage,
     notes: tx.notes,
+    refund_amount: tx.refund_amount,
+    refund_items: tx.refund_items,
+    refunded_by: tx.refunded_by,
+    refunded_at: tx.refunded_at
+      ? moment.utc(tx.refunded_at).utcOffset(9).format('YYYY-MM-DD HH:mm:ss')
+      : null,
     // 🔥 STANDARISASI WIT (+09:00):
     // Menggunakan .utcOffset(9) dari moment agar jam konsisten di Ternate.
     created_at: moment.utc(tx.created_at).utcOffset(9).format('YYYY-MM-DD HH:mm:ss'),
@@ -55,6 +61,16 @@ function mapTransactionToFrontend(tx, owner_id, items = []) {
       notes: item.notes
     }))
   };
+}
+
+function isFnbCategory(category) {
+  const value = String(category || '').toLowerCase().trim();
+  return value === 'makanan_minuman' ||
+    value === 'fnb' ||
+    value === 'f&b' ||
+    value === 'cafe' ||
+    value === 'restoran' ||
+    value === 'restaurant';
 }
 
 const validation = pageValidations.keys({
@@ -82,7 +98,7 @@ const TransactionController = {
       const tx_ids = transactions.map(tx => tx.id);
       const items = await TransactionModel.getItemsByTransactionIds(req.db, tx_ids);
 
-      const mapped = transactions.map(tx => mapTransactionToFrontend(tx, req.user.tenant_id, items[tx.id]));
+      const mapped = transactions.map(tx => mapTransactionToFrontend(tx, req.user.tenant_id, items[tx.id] || []));
 
       return response.success(res, {
         items: mapped,
@@ -240,11 +256,11 @@ const TransactionController = {
       const isPayLater = payment_method === 'cash' && payment_status === 'pending';
       const paidReceivedAmount = Number(received_amount || 0);
 
-      if (isPayLater && String(store?.business_category || '').toLowerCase() !== 'makanan_minuman') {
+      if (isPayLater && !isFnbCategory(store?.business_category)) {
         await trxMaster.rollback();
         await trxTenant.rollback();
 
-        return response.badRequest(res, 'Bayar belakangan hanya tersedia untuk kategori F&B');
+        return response.badRequest(res, 'Bayar Nanti hanya tersedia untuk kategori F&B');
       }
 
       // Memeriksa pembayaran
@@ -545,7 +561,10 @@ const TransactionController = {
 
       const id = parseInt(order_id.split('-').pop(), 10);
       const transaction = await TransactionModel.findTransactionById(tenant_db, store_id, id);
-      if (!transaction) return response.notFound(res, 'Transaction not found!');
+      if (!transaction) {
+        await trxMaster.rollback();
+        return response.notFound(res, 'Transaction not found!');
+      }
 
       const payment_status = fraud_status == 'accept' ? 'paid' : 'canceled';
       const isUpdated = await TransactionModel.updateTransaction(tenant_db, store_id, id, {
@@ -553,7 +572,10 @@ const TransactionController = {
         received_amount: parseFloat(gross_amount),
         change_amount: transaction.total_cost - parseFloat(gross_amount),
       });
-      if (!isUpdated) return response.error(res, null, 'Gagal mengupdate transaksi');
+      if (!isUpdated) {
+        await trxMaster.rollback();
+        return response.error(res, null, 'Gagal mengupdate transaksi');
+      }
 
       // Pengurangan saldo/wallet di owner
       const owner = await OwnerModel.getByTenantId(tenant_id);
@@ -578,8 +600,11 @@ const TransactionController = {
         status: payment_status
       });
 
+      await trxMaster.commit();
+
       return response.success(res, null, 'Transaksi berhasil diupdate');
     } catch (error) {
+      await trxMaster.rollback();
       console.error('Update transaction error:', error);
       return response.error(res, error, 'Terjadi kesalahan saat mengupdate transaksi');
     }
@@ -714,17 +739,24 @@ const TransactionController = {
         }
       }
 
-      await trxTenant.commit();
+      const updatedTransaction = await TransactionModel.findTransactionById(trxTenant, store_id, id);
+      const updatedItems = await TransactionModel.getItemsByTransactionIds(trxTenant, [id]);
+      const mapped = mapTransactionToFrontend(
+        updatedTransaction,
+        tenant_id,
+        updatedItems[id] || []
+      );
 
-      // Log activity
-      await ActivityLogModel.create(req.db, {
+      await ActivityLogModel.create(trxTenant, {
         user_id: userId,
         store_id: store_id,
         action: 'refund_transaction',
         detail: `Refund transaksi ID ${id}, jumlah: ${refundTotal}`
       });
 
-      return response.success(res, { refund_amount: refundTotal }, 'Refund berhasil');
+      await trxTenant.commit();
+
+      return response.success(res, mapped, 'Refund berhasil');
     } catch (error) {
       await trxTenant.rollback();
       console.error('Refund transaction error:', error);
