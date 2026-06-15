@@ -364,11 +364,14 @@ const AuthController = {
       await tenant_db.migrate.latest({ directory: './migrations/tenant' });
 
       // Buat toko pertama default (Simpan alamat lengkap)
+      // PENTING: ikutkan business_category agar toko pertama punya kategori yang
+      // dipilih saat daftar — kalau tidak, toko default ke 'lainnya' dan fitur
+      // per-kategori (mis. F&B) tidak muncul karena app membaca kategori TOKO.
       const [store_id] = await tenant_db("stores").insert({
         name: business_name,
         address: address, // Simpan alamat lengkap ke sini juga jika perlu
         phone: phone,
-        // Optional: Simpan field wilayah jika tabel stores mendukung
+        business_category: business_category || 'lainnya',
       });
 
       // 5. Kembalikan Login Response
@@ -480,11 +483,12 @@ const AuthController = {
       const tenant_db = getTenantConnection({ db_name, db_user, db_pass });
       await tenant_db.migrate.latest({ directory: './migrations/tenant' });
 
-      // Buat toko pertama default
+      // Buat toko pertama default (ikutkan business_category — lihat catatan di registerGoogle)
       const [store_id] = await tenant_db("stores").insert({
         name: business_name,
         address: address,
         phone: phone,
+        business_category: business_category || 'lainnya',
       });
 
       // 4. Kembalikan Login Response
