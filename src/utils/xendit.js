@@ -14,6 +14,7 @@ const xenditAPI = axios.create({
 xenditAPI.interceptors.request.use(config => {
   config.headers.Authorization = getAuthHeader();
   config.headers['Content-Type'] = 'application/json';
+  config.headers['api-version'] = '2022-07-31';
   return config;
 });
 
