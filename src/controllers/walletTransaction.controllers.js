@@ -169,7 +169,7 @@ const WalletTopupController = {
       if (payload.data.status === 'COMPLETED') status = 'success';
     } else if (payload.bank_code) {
       // Virtual Account
-      transaction_id = payload.id; // virtual account callback uses 'id'
+      transaction_id = payload.callback_virtual_account_id || payload.id; 
       // Callback VA usually means it's paid if it fires (for closed VAs)
       status = 'success'; 
     } else if (payload.data && payload.data.channel_category) {
