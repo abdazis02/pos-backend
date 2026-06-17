@@ -33,8 +33,8 @@ router.get(
 );
 
 router.post(
-  '/webhook/midtrans',
-  WalletTransactionController.midtransWebhook
+  '/webhook/xendit',
+  WalletTransactionController.xenditWebhook
 );
 
 module.exports = router
