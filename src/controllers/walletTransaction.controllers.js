@@ -7,7 +7,7 @@ const WalletModel = require("../models/walletTopup.model");
 const WalletTransaction = require("../models/walletTransaction.model");
 const { getIO } = require("../socket");
 const { pageValidations } = require("../validations/page.validation");
-const { createQRIS, createVA, createEWalletCharge } = require("../utils/xendit");
+const { createQRIS, createVA, createEWalletCharge, expireVA } = require("../utils/xendit");
 
 const topupValidation = Joi.object({
   amount: Joi.number().required().min(10000),
@@ -158,9 +158,19 @@ const WalletTopupController = {
         return response.badRequest(res, `Topup tidak bisa dibatalkan karena status sudah ${topup.status}`);
       }
 
+      // 🔥 BATALKAN DI XENDIT (Jika VA)
+      if (topup.payment_method === 'va' && topup.xendit_id) {
+        try {
+          await expireVA(topup.xendit_id);
+          console.log(`✅ VA ${topup.xendit_id} berhasil di-expire di Xendit`);
+        } catch (xe) {
+          console.error('⚠️ Gagal expire VA di Xendit:', xe?.response?.data || xe.message);
+          // Tetap lanjut batalkan di lokal meski Xendit gagal (misal VA sudah kadaluarsa)
+        }
+      }
+
       await master("wallet_topups").where({ id }).update({
         status: 'failed',
-        // Optional: Anda bisa tambahkan keterangan di log atau kolom baru jika ada
       });
 
       return response.success(res, null, 'Topup berhasil dibatalkan');

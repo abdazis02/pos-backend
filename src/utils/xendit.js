@@ -64,8 +64,19 @@ async function createEWalletCharge(reference_id, amount, channel_code, phone_num
   return response.data;
 }
 
+async function expireVA(id) {
+  // Mengupdate tanggal kadaluarsa ke masa lalu untuk membatalkan VA
+  const pastDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const payload = {
+    expiration_date: pastDate
+  };
+  const response = await xenditAPI.patch(`/callback_virtual_accounts/${id}`, payload);
+  return response.data;
+}
+
 module.exports = {
   createQRIS,
   createVA,
-  createEWalletCharge
+  createEWalletCharge,
+  expireVA
 };
