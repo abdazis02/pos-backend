@@ -139,6 +139,37 @@ const WalletTopupController = {
     });
   },
 
+  async cancelTopup(req, res) {
+    try {
+      const { id } = req.params;
+      const owner = await OwnerModel.getByTenantId(req.user.tenant_id);
+
+      const topup = await WalletModel.findWalletTopupById(id);
+
+      if (!topup) {
+        return response.notFound(res, 'Topup tidak ditemukan');
+      }
+
+      if (topup.owner_id !== owner.id) {
+        return response.forbidden(res, 'Akses ditolak');
+      }
+
+      if (topup.status !== 'pending') {
+        return response.badRequest(res, `Topup tidak bisa dibatalkan karena status sudah ${topup.status}`);
+      }
+
+      await master("wallet_topups").where({ id }).update({
+        status: 'failed',
+        // Optional: Anda bisa tambahkan keterangan di log atau kolom baru jika ada
+      });
+
+      return response.success(res, null, 'Topup berhasil dibatalkan');
+    } catch (e) {
+      console.error('❌ CANCEL TOPUP ERROR:', e);
+      return response.error(res, e, 'Gagal membatalkan topup');
+    }
+  },
+
   async xenditWebhook(req, res) {
     // Xendit Webhook Token Verification
     if (!process.env.XENDIT_WEBHOOK_TOKEN) {

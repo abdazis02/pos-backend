@@ -33,6 +33,13 @@ router.get(
 );
 
 router.post(
+  '/topup/cancel/:id',
+  authMiddleware(['owner']),
+  checkTenant,
+  WalletTransactionController.cancelTopup
+);
+
+router.post(
   '/webhook/xendit',
   WalletTransactionController.xenditWebhook
 );
