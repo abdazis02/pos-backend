@@ -17,16 +17,15 @@ xenditAPI.interceptors.request.use(config => {
   return config;
 });
 
-async function createQRIS(reference_id, amount, callback_url = null) {
+async function createQRIS(reference_id, amount) {
   const payload = {
     reference_id: reference_id,
+    external_id: reference_id,
     type: 'DYNAMIC',
     currency: 'IDR',
-    amount: amount
+    amount: amount,
+    callback_url: process.env.URL || 'https://pipos.kamunara.com'
   };
-  if (callback_url) {
-    payload.callback_url = callback_url;
-  }
   const response = await xenditAPI.post('/qr_codes', payload);
   return response.data;
 }
