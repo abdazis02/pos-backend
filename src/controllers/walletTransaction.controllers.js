@@ -69,7 +69,8 @@ const WalletTopupController = {
         qr_string = qrResponse.qr_string;
       } else if (payment_method === 'va') {
         if (!value.bank_code) throw new Error("bank_code wajib diisi untuk VA (misal: BCA, MANDIRI)");
-        const vaResponse = await createVA(order_id, value.amount, value.bank_code, owner.name || 'Merchant PIPos');
+        const expirationDate = moment().add(60, 'minutes').toISOString();
+        const vaResponse = await createVA(order_id, value.amount, value.bank_code, owner.name || 'Merchant PIPos', expirationDate);
         xendit_id = vaResponse.id;
         va_number = vaResponse.account_number;
       } else if (payment_method === 'ewallet') {

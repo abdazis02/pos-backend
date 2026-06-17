@@ -31,7 +31,7 @@ async function createQRIS(reference_id, amount) {
   return response.data;
 }
 
-async function createVA(external_id, amount, bank_code, name) {
+async function createVA(external_id, amount, bank_code, name, expiration_date = null) {
   const payload = {
     external_id: external_id,
     bank_code: bank_code,
@@ -40,6 +40,9 @@ async function createVA(external_id, amount, bank_code, name) {
     is_closed: true,
     is_single_use: true,
   };
+  if (expiration_date) {
+    payload.expiration_date = expiration_date;
+  }
   const response = await xenditAPI.post('/callback_virtual_accounts', payload);
   return response.data;
 }
