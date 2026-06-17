@@ -7,11 +7,11 @@ const WalletModel = require("../models/walletTopup.model");
 const WalletTransaction = require("../models/walletTransaction.model");
 const { getIO } = require("../socket");
 const { pageValidations } = require("../validations/page.validation");
-const { createQRIS, createVA, createEWalletCharge, expireVA } = require("../utils/xendit");
+const { createQRIS, createVA, createEWalletCharge, expireVA, createInvoice } = require("../utils/xendit");
 
 const topupValidation = Joi.object({
   amount: Joi.number().required().min(10000),
-  payment_method: Joi.string().valid('qris', 'va', 'ewallet').required(),
+  payment_method: Joi.string().valid('qris', 'va', 'ewallet', 'xendit_browser').required(),
   bank_code: Joi.string().optional().allow('', null),
   channel_code: Joi.string().optional().allow('', null),
   phone_number: Joi.string().optional().allow('', null),
@@ -113,6 +113,10 @@ const WalletTopupController = {
         const ewResponse = await createEWalletCharge(order_id, value.amount, value.channel_code, value.phone_number);
         xendit_id = ewResponse.reference_id; 
         checkout_url = extractEwalletCheckoutUrl(ewResponse);
+      } else if (payment_method === 'xendit_browser') {
+        const invoice = await createInvoice(order_id, value.amount, owner.email, `Topup Saldo Merchant: ${owner.name || owner.business_name}`);
+        xendit_id = invoice.id;
+        checkout_url = invoice.invoice_url;
       }
 
       const data = {

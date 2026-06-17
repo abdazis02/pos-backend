@@ -83,9 +83,30 @@ async function expireVA(id) {
   return response.data;
 }
 
+async function createInvoice(external_id, amount, payer_email = null, description = 'Topup Saldo PIPos') {
+  const baseUrl = getBaseUrl();
+  const payload = {
+    external_id: external_id,
+    amount: amount,
+    description: description,
+    invoice_duration: 3600, // 1 jam
+    currency: 'IDR',
+    success_redirect_url: `${baseUrl}/payment/success`,
+    failure_redirect_url: `${baseUrl}/payment/failed`,
+  };
+
+  if (payer_email) {
+    payload.payer_email = payer_email;
+  }
+
+  const response = await xenditAPI.post('/v2/invoices', payload);
+  return response.data;
+}
+
 module.exports = {
   createQRIS,
   createVA,
   createEWalletCharge,
-  expireVA
+  expireVA,
+  createInvoice
 };
