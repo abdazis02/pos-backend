@@ -20,5 +20,6 @@ exports.down = function (knex) {
     table.dropColumn('xendit_id');
     table.dropColumn('va_number');
     table.dropColumn('checkout_url');
+    table.dropColumn('qr_string');
   });
 };

@@ -77,7 +77,7 @@ router.delete(
   TransactionController.delete
 );
 
-// Transaction Midtrans Callback (protected route)
+// Transaction Xendit QRIS Callback
 router.post(
   '/:tenant_id/transaction-callback/:store_id',
   TransactionController.updateStatus

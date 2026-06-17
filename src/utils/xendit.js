@@ -1,6 +1,9 @@
 const axios = require('axios');
 
 const getAuthHeader = () => {
+  if (!process.env.XENDIT_SECRET_KEY) {
+    throw new Error('XENDIT_SECRET_KEY belum dikonfigurasi');
+  }
   return 'Basic ' + Buffer.from(process.env.XENDIT_SECRET_KEY + ':').toString('base64');
 };
 
@@ -14,13 +17,16 @@ xenditAPI.interceptors.request.use(config => {
   return config;
 });
 
-async function createQRIS(reference_id, amount) {
+async function createQRIS(reference_id, amount, callback_url = null) {
   const payload = {
     reference_id: reference_id,
     type: 'DYNAMIC',
     currency: 'IDR',
     amount: amount
   };
+  if (callback_url) {
+    payload.callback_url = callback_url;
+  }
   const response = await xenditAPI.post('/qr_codes', payload);
   return response.data;
 }

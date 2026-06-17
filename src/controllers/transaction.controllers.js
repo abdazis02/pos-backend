@@ -11,7 +11,7 @@ const ActivityLogModel = require('../models/activityLog.model');
 const WalletTransaction = require('../models/walletTransaction.model');
 const { transactionValidations, refundValidations, payLaterValidations } = require('../validations/transaction.validation');
 const { getIO } = require('../socket');
-const { getTenantApi } = require('../utils/midtrans');
+const { createQRIS } = require('../utils/xendit');
 const { pageValidations } = require('../validations/page.validation');
 const { getTenantConnection } = require('../config/knexTenant');
 const { calculateBundlePrice } = require('../utils/pricing');
@@ -45,6 +45,8 @@ function mapTransactionToFrontend(tx, owner_id, items = []) {
     refunded_at: tx.refunded_at
       ? moment.utc(tx.refunded_at).utcOffset(9).format('YYYY-MM-DD HH:mm:ss')
       : null,
+    xendit_id: tx.xendit_id,
+    qr_string: tx.qr_string,
     // 🔥 STANDARISASI WIT (+09:00):
     // Menggunakan .utcOffset(9) dari moment agar jam konsisten di Ternate.
     created_at: moment.utc(tx.created_at).utcOffset(9).format('YYYY-MM-DD HH:mm:ss'),
@@ -344,28 +346,20 @@ const TransactionController = {
       const mapped = mapTransactionToFrontend(txRow, req.user.tenant_id, processedItems);
 
       if (payment_method == 'qris') {
-        if (!store.midtrans_server_key || !store.midtrans_client_key) {
-          await trxMaster.rollback();
-          await trxTenant.rollback();
+        const callbackUrl = `${process.env.URL}/api/stores/${tenant_id}/transaction-callback/${store_id}`;
+        const qrResponse = await createQRIS(
+          `TX-T${tenant_id}-S${store_id}-${transaction_id}`,
+          Math.round(grandTotal),
+          callbackUrl
+        );
 
-          return response.badRequest(res, 'Qris midtrans key belum disetting, silahkan lengkapi terlebih dahulu!');
-        }
+        await TransactionModel.updateTransaction(trxTenant, store_id, transaction_id, {
+          xendit_id: qrResponse.id,
+          qr_string: qrResponse.qr_string,
+        });
 
-        const api = getTenantApi(store)
-        api.httpClient.http_client.defaults.headers.common['X-Override-Notification'] = `${process.env.URL}/api/stores/${tenant_id}/transaction-callback/${store_id}`;
-
-        const transaction = await api.charge({
-          payment_type: "gopay",
-          transaction_details: {
-            order_id: `TX-T${tenant_id}-S${store_id}-${transaction_id}`,
-            gross_amount: grandTotal
-          }
-        })
-
-        const qrisData = transaction.actions.find(action => action.name === 'generate-qr-code-v2');
-
-        if (qrisData)
-          mapped.qris_url = qrisData.url
+        mapped.xendit_id = qrResponse.id;
+        mapped.qr_string = qrResponse.qr_string;
       } else {
         // Pengurangan saldo/wallet di owner
         const owner = await OwnerModel.getByTenantId(tenant_id);
@@ -521,36 +515,33 @@ const TransactionController = {
   },
 
   async updateStatus(req, res) {
-    if (req.body.status_code < 200 || req.body.status_code >= 300) {
-      return res.status(200)
-    }
-
     const { tenant_id, store_id } = req.params;
     
-    // Fetch store first to get its midtrans server key
-    const store = await StoreModel.findStoreById(master, store_id);
-    if (!store || !store.midtrans_server_key) {
-      return response.badRequest(res, 'Store Midtrans Server Key not configured');
+    if (!process.env.XENDIT_WEBHOOK_TOKEN) {
+      console.error('XENDIT_WEBHOOK_TOKEN belum dikonfigurasi');
+      return response.error(res, null, 'Webhook token belum dikonfigurasi');
     }
 
-    const { order_id, status_code, gross_amount, transaction_status, fraud_status, signature_key } = req.body;
+    const xenditToken = req.headers['x-callback-token'];
+    if (xenditToken !== process.env.XENDIT_WEBHOOK_TOKEN) {
+      return response.badRequest(res, 'Invalid callback token');
+    }
+
+    const payload = req.body || {};
+    const data = payload.data || payload;
+    const xenditId = data.qr_id || data.id;
+    const referenceId = data.reference_id || payload.reference_id || '';
+    const qrStatus = data.status || payload.status;
+
+    if (!xenditId && !referenceId) {
+      return res.sendStatus(200);
+    }
+
+    if (!['COMPLETED', 'SUCCEEDED', 'SUCCESS'].includes(qrStatus)) {
+      return res.sendStatus(200);
+    }
     
     // 🔥 PENTING: Gunakan Server Key milik TOKO, bukan milik superadmin!
-    const payload = order_id + status_code + gross_amount + store.midtrans_server_key;
-
-    const hash = require('crypto')
-      .createHash("sha512")
-      .update(payload)
-      .digest("hex");
-
-    if (hash != signature_key) {
-      return response.badRequest(res, 'Invalid signature key')
-    }
-
-    if (transaction_status != 'settlement') {
-      return res.status(200)
-    }
-
     const trxMaster = await master.transaction()
     try {
 
@@ -559,18 +550,37 @@ const TransactionController = {
       const tenant = await OwnerModel.getTenantByID(tenant_id);
       const tenant_db = getTenantConnection(tenant);
 
-      const id = parseInt(order_id.split('-').pop(), 10);
-      const transaction = await TransactionModel.findTransactionById(tenant_db, store_id, id);
+      const idFromReference = parseInt(referenceId.split('-').pop(), 10);
+      let transaction = xenditId
+        ? await tenant_db('transactions')
+          .where({ store_id, xendit_id: xenditId })
+          .first()
+        : null;
+
+      const id = transaction?.id || idFromReference;
+      if (!id) {
+        await trxMaster.rollback();
+        return response.notFound(res, 'Transaction not found!');
+      }
+
+      if (!transaction) {
+        transaction = await TransactionModel.findTransactionById(tenant_db, store_id, id);
+      }
       if (!transaction) {
         await trxMaster.rollback();
         return response.notFound(res, 'Transaction not found!');
       }
 
-      const payment_status = fraud_status == 'accept' ? 'paid' : 'canceled';
+      if (transaction.payment_status === 'paid') {
+        await trxMaster.rollback();
+        return res.sendStatus(200);
+      }
+
+      const grossAmount = parseFloat(data.amount || payload.amount || transaction.total_cost || 0);
       const isUpdated = await TransactionModel.updateTransaction(tenant_db, store_id, id, {
-        payment_status,
-        received_amount: parseFloat(gross_amount),
-        change_amount: transaction.total_cost - parseFloat(gross_amount),
+        payment_status: 'paid',
+        received_amount: grossAmount,
+        change_amount: 0,
       });
       if (!isUpdated) {
         await trxMaster.rollback();
@@ -597,7 +607,7 @@ const TransactionController = {
       getIO().to(mapped.idFull).emit('payment-success', {
         message: "Pembayaran Lunas!",
         transaction_id: mapped.idFull,
-        status: payment_status
+        status: 'paid'
       });
 
       await trxMaster.commit();

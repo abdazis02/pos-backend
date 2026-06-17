@@ -11,7 +11,7 @@ const { createQRIS, createVA, createEWalletCharge } = require("../utils/xendit")
 
 const topupValidation = Joi.object({
   amount: Joi.number().required().min(10000),
-  payment_method: Joi.string().valid('qris', 'va', 'ewallet', 'manual_bca').required(),
+  payment_method: Joi.string().valid('qris', 'va', 'ewallet').required(),
   bank_code: Joi.string().optional().allow('', null),
   channel_code: Joi.string().optional().allow('', null),
   phone_number: Joi.string().optional().allow('', null),
@@ -60,33 +60,23 @@ const WalletTopupController = {
       let qr_string = null;
       let va_number = null;
       let checkout_url = null;
-      let payment_method = value.payment_method;
+      const payment_method = value.payment_method;
       const order_id = 'TOPUP-' + moment().unix() + '-' + owner.id;
 
       if (payment_method === 'qris') {
         const qrResponse = await createQRIS(order_id, value.amount);
         xendit_id = qrResponse.id;
         qr_string = qrResponse.qr_string;
-        qris_url = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr_string)}`;
       } else if (payment_method === 'va') {
         if (!value.bank_code) throw new Error("bank_code wajib diisi untuk VA (misal: BCA, MANDIRI)");
         const vaResponse = await createVA(order_id, value.amount, value.bank_code, owner.name || 'Merchant PIPos');
         xendit_id = vaResponse.id;
         va_number = vaResponse.account_number;
       } else if (payment_method === 'ewallet') {
-        if (!value.channel_code) throw new Error("channel_code wajib diisi untuk E-Wallet (misal: OVO, DANA)");
+        if (!value.channel_code) throw new Error("channel_code wajib diisi untuk E-Money (misal: OVO, DANA)");
         const ewResponse = await createEWalletCharge(order_id, value.amount, value.channel_code, value.phone_number);
         xendit_id = ewResponse.reference_id; 
-        
-        if (ewResponse.actions && ewResponse.actions.desktop_web_checkout_url) {
-           checkout_url = ewResponse.actions.desktop_web_checkout_url;
-        } else if (ewResponse.actions && ewResponse.actions.mobile_web_checkout_url) {
-           checkout_url = ewResponse.actions.mobile_web_checkout_url;
-        } else if (ewResponse.actions && ewResponse.actions.mobile_deeplink_checkout_url) {
-           checkout_url = ewResponse.actions.mobile_deeplink_checkout_url;
-        }
-      } else {
-        xendit_id = 'MANUAL-' + moment().unix() + '-' + Math.floor(Math.random() * 1000);
+        checkout_url = ewResponse.actions?.mobile_deeplink_checkout_url || null;
       }
 
       const data = {
@@ -138,9 +128,7 @@ const WalletTopupController = {
     )
 
     const items = data.map(item => {
-      if (item.status == 'pending' && item.qr_string) {
-        item.qris_url = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(item.qr_string)}`;
-      }
+      item.qris_url = null;
       return item;
     })
 
@@ -153,29 +141,36 @@ const WalletTopupController = {
 
   async xenditWebhook(req, res) {
     // Xendit Webhook Token Verification
+    if (!process.env.XENDIT_WEBHOOK_TOKEN) {
+      console.error('XENDIT_WEBHOOK_TOKEN belum dikonfigurasi');
+      return response.error(res, null, 'Webhook token belum dikonfigurasi');
+    }
+
     const xenditToken = req.headers['x-callback-token'];
     if (xenditToken !== process.env.XENDIT_WEBHOOK_TOKEN) {
       return response.badRequest(res, 'Invalid callback token');
     }
 
-    const payload = req.body;
+    const payload = req.body || {};
+    const data = payload.data || payload;
     let status = 'failed';
     let transaction_id = null;
     
-    // Deteksi tipe webhook (Omni-Webhook)
-    if (payload.event === 'qr.payment') {
+    // Deteksi tipe webhook Xendit untuk QRIS, VA, dan E-Money.
+    if (payload.event === 'qr.payment' || data.qr_id) {
       // QRIS
-      transaction_id = payload.data.qr_id; // qr_id is what we get in xendit_id
-      if (payload.data.status === 'COMPLETED') status = 'success';
-    } else if (payload.bank_code) {
+      transaction_id = data.qr_id; // qr_id disimpan sebagai xendit_id.
+      if (['COMPLETED', 'SUCCEEDED', 'SUCCESS'].includes(data.status)) status = 'success';
+    } else if (data.callback_virtual_account_id || data.bank_code) {
       // Virtual Account
-      transaction_id = payload.callback_virtual_account_id || payload.id; 
-      // Callback VA usually means it's paid if it fires (for closed VAs)
-      status = 'success'; 
-    } else if (payload.data && payload.data.channel_category) {
-      // E-Wallet
-      transaction_id = payload.data.reference_id;
-      if (payload.data.status === 'SUCCEEDED') status = 'success';
+      transaction_id = data.callback_virtual_account_id || data.id; 
+      status = ['COMPLETED', 'SUCCEEDED', 'SUCCESS', 'PAID'].includes(data.status)
+        ? 'success'
+        : (data.status ? 'failed' : 'success');
+    } else if (data.reference_id || data.channel_category) {
+      // E-Money
+      transaction_id = data.reference_id;
+      if (['SUCCEEDED', 'COMPLETED', 'SUCCESS'].includes(data.status)) status = 'success';
     } else {
       // Tipe webhook lain yang tidak dikenali
       return res.sendStatus(200);
