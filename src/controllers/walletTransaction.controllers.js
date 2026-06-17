@@ -25,6 +25,41 @@ const historyValidations = pageValidations.keys({
   status: Joi.string().valid('', 'success', 'pending', 'failed')
 });
 
+function buildPublicUrl(path) {
+  const baseUrl = (process.env.URL || 'https://pipos.kamunara.com').replace(/\/+$/, '');
+  return `${baseUrl}${path}`;
+}
+
+function extractEwalletCheckoutUrl(responseData) {
+  const actions = responseData?.actions;
+  if (!actions) return null;
+
+  if (Array.isArray(actions)) {
+    const action = actions.find(item =>
+      [
+        'mobile_deeplink_checkout_url',
+        'mobile_web_checkout_url',
+        'desktop_web_checkout_url',
+        'checkout_url',
+      ].includes(item?.type)
+    );
+    return action?.url || null;
+  }
+
+  return actions.mobile_deeplink_checkout_url ||
+    actions.mobile_web_checkout_url ||
+    actions.desktop_web_checkout_url ||
+    actions.checkout_url ||
+    null;
+}
+
+function normalizeXenditStatus(value) {
+  const status = value?.toString().toUpperCase();
+  if (['COMPLETED', 'SUCCEEDED', 'SUCCESS', 'PAID'].includes(status)) return 'success';
+  if (['FAILED', 'EXPIRED', 'VOIDED', 'CANCELLED', 'CANCELED'].includes(status)) return 'failed';
+  return 'pending';
+}
+
 const WalletTopupController = {
   async list(req, res) {
     const { value, error } = listValidations.validate(req.query)
@@ -64,25 +99,25 @@ const WalletTopupController = {
       const order_id = 'TOPUP-' + moment().unix() + '-' + owner.id;
 
       if (payment_method === 'qris') {
-        const qrResponse = await createQRIS(order_id, value.amount);
+        const qrResponse = await createQRIS(order_id, value.amount, buildPublicUrl('/api/wallet/webhook/xendit'));
         xendit_id = qrResponse.id;
         qr_string = qrResponse.qr_string;
       } else if (payment_method === 'va') {
-        if (!value.bank_code) throw new Error("bank_code wajib diisi untuk VA (misal: BCA, MANDIRI)");
+        if (!value.bank_code) throw new Error("bank_code wajib diisi untuk VA (misal: BCA, MANDIRI, BSI)");
         const expirationDate = moment().add(60, 'minutes').toISOString();
-        const vaResponse = await createVA(order_id, value.amount, value.bank_code, owner.name || 'Merchant PIPos', expirationDate);
+        const vaResponse = await createVA(order_id, value.amount, value.bank_code.toUpperCase(), owner.name || 'Merchant PIPos', expirationDate);
         xendit_id = vaResponse.id;
         va_number = vaResponse.account_number;
       } else if (payment_method === 'ewallet') {
         if (!value.channel_code) throw new Error("channel_code wajib diisi untuk E-Money (misal: OVO, DANA)");
         const ewResponse = await createEWalletCharge(order_id, value.amount, value.channel_code, value.phone_number);
         xendit_id = ewResponse.reference_id; 
-        checkout_url = ewResponse.actions?.mobile_deeplink_checkout_url || null;
+        checkout_url = extractEwalletCheckoutUrl(ewResponse);
       }
 
       const data = {
         owner_id: owner.id,
-        midtrans_transaction_id: null,
+        midtrans_transaction_id: order_id,
         xendit_id: xendit_id,
         va_number: va_number,
         checkout_url: checkout_url,
@@ -90,6 +125,8 @@ const WalletTopupController = {
         amount: value.amount,
         status: 'pending',
         payment_method: payment_method,
+        bank_code: payment_method === 'va' ? value.bank_code.toUpperCase() : null,
+        channel_code: payment_method === 'ewallet' ? value.channel_code : null,
         expired_at: moment().add(60, 'minutes').format('YYYY-MM-DD HH:mm:ss'),
       }
 
@@ -138,6 +175,27 @@ const WalletTopupController = {
       total: total.cnt,
       filtered: filtered.cnt,
     });
+  },
+
+  async topupDetail(req, res) {
+    try {
+      const { id } = req.params;
+      const owner = await OwnerModel.getByTenantId(req.user.tenant_id);
+      const topup = await WalletModel.findWalletTopupById(id);
+
+      if (!topup) {
+        return response.notFound(res, 'Topup tidak ditemukan');
+      }
+
+      if (topup.owner_id !== owner.id) {
+        return response.forbidden(res, 'Akses ditolak');
+      }
+
+      topup.qris_url = null;
+      return response.success(res, topup);
+    } catch (e) {
+      return response.error(res, e, 'Gagal memuat detail topup');
+    }
   },
 
   async cancelTopup(req, res) {
@@ -195,39 +253,32 @@ const WalletTopupController = {
 
     const payload = req.body || {};
     const data = payload.data || payload;
-    let status = 'failed';
-    let transaction_id = null;
-    
-    // Deteksi tipe webhook Xendit untuk QRIS, VA, dan E-Money.
-    if (payload.event === 'qr.payment' || data.qr_id) {
-      // QRIS
-      transaction_id = data.qr_id; // qr_id disimpan sebagai xendit_id.
-      if (['COMPLETED', 'SUCCEEDED', 'SUCCESS'].includes(data.status)) status = 'success';
-    } else if (data.callback_virtual_account_id || data.bank_code) {
-      // Virtual Account
-      transaction_id = data.callback_virtual_account_id || data.id; 
-      status = ['COMPLETED', 'SUCCEEDED', 'SUCCESS', 'PAID'].includes(data.status)
-        ? 'success'
-        : (data.status ? 'failed' : 'success');
-    } else if (data.reference_id || data.channel_category) {
-      // E-Money
-      transaction_id = data.reference_id;
-      if (['SUCCEEDED', 'COMPLETED', 'SUCCESS'].includes(data.status)) status = 'success';
-    } else {
-      // Tipe webhook lain yang tidak dikenali
-      return res.sendStatus(200);
-    }
+    const status = normalizeXenditStatus(data.status || payload.status);
+    const transactionCandidates = [
+      data.qr_id,
+      data.callback_virtual_account_id,
+      data.reference_id,
+      payload.reference_id,
+      data.external_id,
+      data.id,
+    ].filter(Boolean);
 
-    if (status !== 'success') {
+    if (transactionCandidates.length === 0 || status !== 'success') {
       return res.sendStatus(200);
     }
 
     const trx = await master.transaction();
     try {
-      // Cari transaksi berdasarkan xendit_id (di tabel xendit_id menyimpan qr_id, va_id, atau reference_id)
-      const wallet = await master('wallet_topups').where('xendit_id', transaction_id).first();
+      const wallet = await master('wallet_topups')
+        .whereIn('xendit_id', transactionCandidates)
+        .orWhereIn('midtrans_transaction_id', transactionCandidates)
+        .first();
       
-      if (!wallet) { await trx.rollback(); return response.notFound(res, 'Transaction not found!'); }
+      if (!wallet) {
+        await trx.rollback();
+        console.warn('Xendit topup webhook tidak menemukan transaksi:', transactionCandidates);
+        return res.sendStatus(200);
+      }
 
       // 🔒 Idempoten: jangan proses ulang topup yang sudah sukses
       if (wallet.status === 'success') { await trx.rollback(); return res.sendStatus(200); }
@@ -258,9 +309,9 @@ const WalletTopupController = {
         await OwnerModel.addBalance(trx, wallet.owner_id, wallet.amount)
       }
 
-      getIO().to(transaction_id).emit('payment-success', {
+      getIO().to(wallet.xendit_id).emit('payment-success', {
         message: "Pembayaran Lunas!",
-        transaction_id: transaction_id,
+        transaction_id: wallet.xendit_id,
         status: status
       });
 

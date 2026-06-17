@@ -32,6 +32,13 @@ router.get(
   WalletTransactionController.topupHistory
 );
 
+router.get(
+  '/topup/:id',
+  authMiddleware(['owner']),
+  checkTenant,
+  WalletTransactionController.topupDetail
+);
+
 router.post(
   '/topup/cancel/:id',
   authMiddleware(['owner']),

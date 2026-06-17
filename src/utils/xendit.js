@@ -18,14 +18,18 @@ xenditAPI.interceptors.request.use(config => {
   return config;
 });
 
-async function createQRIS(reference_id, amount) {
+function getBaseUrl() {
+  return (process.env.URL || 'https://pipos.kamunara.com').replace(/\/+$/, '');
+}
+
+async function createQRIS(reference_id, amount, callback_url = null) {
   const payload = {
     reference_id: reference_id,
     external_id: reference_id,
     type: 'DYNAMIC',
     currency: 'IDR',
     amount: amount,
-    callback_url: process.env.URL || 'https://pipos.kamunara.com'
+    callback_url: callback_url || getBaseUrl()
   };
   const response = await xenditAPI.post('/qr_codes', payload);
   return response.data;
@@ -48,6 +52,7 @@ async function createVA(external_id, amount, bank_code, name, expiration_date = 
 }
 
 async function createEWalletCharge(reference_id, amount, channel_code, phone_number = null) {
+  const baseUrl = getBaseUrl();
   const payload = {
     reference_id: reference_id,
     currency: 'IDR',
@@ -55,7 +60,8 @@ async function createEWalletCharge(reference_id, amount, channel_code, phone_num
     checkout_method: 'ONE_TIME_PAYMENT',
     channel_code: channel_code,
     channel_properties: {
-      success_redirect_url: process.env.URL || 'https://kamunara.com',
+      success_redirect_url: `${baseUrl}/payment/success`,
+      failure_redirect_url: `${baseUrl}/payment/failed`,
     }
   };
   
