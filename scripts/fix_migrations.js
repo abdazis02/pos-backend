@@ -1,3 +1,4 @@
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const master = require('../src/config/knexMaster'); // Memanggil koneksi database
