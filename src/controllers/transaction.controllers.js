@@ -121,10 +121,10 @@ const TransactionController = {
       const { store_id } = req.params;
       const { tenant_id, id: userId } = req.user;
 
-      const fee = parseInt(process.env.TRANSACTION_FEE, 10)
+      const fee = parseInt(process.env.TRANSACTION_FEE, 10) || 0;
       const before = await OwnerModel.getBalanceByTenant(trxMaster, tenant_id);
-      const after = before - fee;
-      if (after < 0) {
+
+      if (before < fee) {
         await trxMaster.rollback();
         await trxTenant.rollback();
 
@@ -361,8 +361,11 @@ const TransactionController = {
         mapped.xendit_id = qrResponse.id;
         mapped.qr_string = qrResponse.qr_string;
       } else {
-        // Pengurangan saldo/wallet di owner
+        // 🔥 PENATAAN ULANG: Pemotongan saldo di akhir agar tidak terpotong jika gagal
         const owner = await OwnerModel.getByTenantId(tenant_id);
+        const currentBalance = await OwnerModel.getBalanceByTenant(trxMaster, tenant_id);
+        const after = currentBalance - fee;
+
         await WalletTransaction.createTransaction(trxMaster, {
           owner_id: owner.id,
           type: 'transaction_fee',
@@ -370,7 +373,7 @@ const TransactionController = {
           balance_after: after,
           reference_type: 'transactions',
           reference_id: transaction_id,
-          description: `Transaksi fee pada id ${transaction_id?.toString().padStart(6, '0')}`
+          description: `Fee Transaksi Kasir #${transaction_id?.toString().padStart(6, '0')}`
         });
 
         await OwnerModel.subtractBalance(trxMaster, owner.id, fee);
