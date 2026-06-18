@@ -7,13 +7,11 @@ const WalletModel = require("../models/walletTopup.model");
 const WalletTransaction = require("../models/walletTransaction.model");
 const { getIO } = require("../socket");
 const { pageValidations } = require("../validations/page.validation");
-const { createQRIS, createVA, createEWalletCharge, expireVA, createInvoice } = require("../utils/xendit");
+const { expireVA, createInvoice } = require("../utils/xendit");
 
 const topupValidation = Joi.object({
   amount: Joi.number().required().min(10000),
-  payment_method: Joi.string().valid('qris', 'va', 'ewallet', 'xendit_browser').required(),
-  bank_code: Joi.string().optional().allow('', null),
-  channel_code: Joi.string().optional().allow('', null),
+  payment_method: Joi.string().valid('xendit_browser').required(),
   phone_number: Joi.string().optional().allow('', null),
 });
 
@@ -25,33 +23,7 @@ const historyValidations = pageValidations.keys({
   status: Joi.string().valid('', 'success', 'pending', 'failed')
 });
 
-function buildPublicUrl(path) {
-  const baseUrl = (process.env.URL || 'https://pipos.kamunara.com').replace(/\/+$/, '');
-  return `${baseUrl}${path}`;
-}
-
-function extractEwalletCheckoutUrl(responseData) {
-  const actions = responseData?.actions;
-  if (!actions) return null;
-
-  if (Array.isArray(actions)) {
-    const action = actions.find(item =>
-      [
-        'mobile_deeplink_checkout_url',
-        'mobile_web_checkout_url',
-        'desktop_web_checkout_url',
-        'checkout_url',
-      ].includes(item?.type)
-    );
-    return action?.url || null;
-  }
-
-  return actions.mobile_deeplink_checkout_url ||
-    actions.mobile_web_checkout_url ||
-    actions.desktop_web_checkout_url ||
-    actions.checkout_url ||
-    null;
-}
+const TOPUP_ADMIN_FEE = 2000;
 
 function normalizeXenditStatus(value) {
   const status = value?.toString().toUpperCase();
@@ -97,27 +69,21 @@ const WalletTopupController = {
       let checkout_url = null;
       const payment_method = value.payment_method;
       const order_id = 'TOPUP-' + moment().unix() + '-' + owner.id;
+      const admin_fee = TOPUP_ADMIN_FEE;
+      const total_amount = Number(value.amount) + admin_fee;
 
-      if (payment_method === 'qris') {
-        const qrResponse = await createQRIS(order_id, value.amount, buildPublicUrl('/api/wallet/webhook/xendit'));
-        xendit_id = qrResponse.id;
-        qr_string = qrResponse.qr_string;
-      } else if (payment_method === 'va') {
-        if (!value.bank_code) throw new Error("bank_code wajib diisi untuk VA (misal: BCA, MANDIRI, BSI)");
-        const expirationDate = moment().add(60, 'minutes').toISOString();
-        const vaResponse = await createVA(order_id, value.amount, value.bank_code.toUpperCase(), owner.name || 'Merchant PIPos', expirationDate);
-        xendit_id = vaResponse.id;
-        va_number = vaResponse.account_number;
-      } else if (payment_method === 'ewallet') {
-        if (!value.channel_code) throw new Error("channel_code wajib diisi untuk E-Money (misal: OVO, DANA)");
-        const ewResponse = await createEWalletCharge(order_id, value.amount, value.channel_code, value.phone_number);
-        xendit_id = ewResponse.reference_id; 
-        checkout_url = extractEwalletCheckoutUrl(ewResponse);
-      } else if (payment_method === 'xendit_browser') {
-        const invoice = await createInvoice(order_id, value.amount, owner.email, `Topup Saldo Merchant: ${owner.name || owner.business_name}`);
-        xendit_id = invoice.id;
-        checkout_url = invoice.invoice_url;
-      }
+      const invoice = await createInvoice(
+        order_id,
+        total_amount,
+        owner.email,
+        `Topup Saldo Merchant: ${owner.name || owner.business_name || 'PIPos'}`,
+        {
+          topupAmount: value.amount,
+          adminFee: admin_fee,
+        }
+      );
+      xendit_id = invoice.id;
+      checkout_url = invoice.invoice_url;
 
       const data = {
         owner_id: owner.id,
@@ -127,10 +93,10 @@ const WalletTopupController = {
         checkout_url: checkout_url,
         qr_string: qr_string,
         amount: value.amount,
+        admin_fee: admin_fee,
+        total_amount: total_amount,
         status: 'pending',
         payment_method: payment_method,
-        bank_code: payment_method === 'va' ? value.bank_code.toUpperCase() : null,
-        channel_code: payment_method === 'ewallet' ? value.channel_code : null,
         expired_at: moment().add(60, 'minutes').format('YYYY-MM-DD HH:mm:ss'),
       }
 

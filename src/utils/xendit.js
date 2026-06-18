@@ -83,8 +83,16 @@ async function expireVA(id) {
   return response.data;
 }
 
-async function createInvoice(external_id, amount, payer_email = null, description = 'Topup Saldo PIPos') {
+async function createInvoice(
+  external_id,
+  amount,
+  payer_email = null,
+  description = 'Topup Saldo PIPos',
+  options = {}
+) {
   const baseUrl = getBaseUrl();
+  const topupAmount = Number(options.topupAmount || amount);
+  const adminFee = Number(options.adminFee || 0);
   const payload = {
     external_id: external_id,
     amount: amount,
@@ -93,7 +101,22 @@ async function createInvoice(external_id, amount, payer_email = null, descriptio
     currency: 'IDR',
     success_redirect_url: `${baseUrl}/payment/success`,
     failure_redirect_url: `${baseUrl}/payment/failed`,
+    items: [
+      {
+        name: 'Topup Saldo PIPos',
+        quantity: 1,
+        price: topupAmount,
+      },
+    ],
   };
+
+  if (adminFee > 0) {
+    payload.items.push({
+      name: 'Biaya Layanan',
+      quantity: 1,
+      price: adminFee,
+    });
+  }
 
   if (payer_email) {
     payload.payer_email = payer_email;
