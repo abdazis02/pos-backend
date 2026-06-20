@@ -23,7 +23,8 @@ const historyValidations = pageValidations.keys({
   status: Joi.string().valid('', 'success', 'pending', 'failed')
 });
 
-const TOPUP_ADMIN_FEE = 2000;
+// Biaya admin topup (menutup potongan Xendit ~Rp4.440 agar tidak rugi).
+const TOPUP_ADMIN_FEE = 5000;
 
 function normalizeXenditStatus(value) {
   const status = value?.toString().toUpperCase();
