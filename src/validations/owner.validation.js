@@ -8,6 +8,7 @@ const OwnerValidation = Joi.object({
     'makanan_minuman',
     'kesehatan_kecantikan',
     'jasa_agen',
+    'laundry',
     'lainnya'
   ).optional(),
   email: Joi.string().trim().required().email(),

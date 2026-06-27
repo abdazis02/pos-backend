@@ -7,6 +7,7 @@ const storeValidations = Joi.object({
     'makanan_minuman',
     'kesehatan_kecantikan',
     'jasa_agen',
+    'laundry',
     'lainnya'
   ).allow(null, ''),
   address: Joi.string().trim().allow(null, ''),

@@ -119,6 +119,9 @@ const productValidations = Joi.object({
   batch_number: Joi.string().trim().allow(null, ""), // 🔥 Tambahan
   wholesale_price: Joi.number().min(0).allow(null, ""), // 🔥 Tambahan
   min_wholesale_qty: Joi.number().integer().min(1).allow(null, ""), // 🔥 Tambahan
+  // Satuan jual (khusus laundry: 'kg'). Tanpa default & tanpa '' agar saat tidak
+  // dikirim nilainya tidak ikut ditulis (tidak menimpa produk lain).
+  sell_unit: Joi.string().valid('pcs', 'kg').allow(null), // 🔥 laundry
 })
 
 // module.exports = productValidation;
