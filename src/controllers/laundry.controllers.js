@@ -6,6 +6,7 @@ const LaundryOrderModel = require('../models/laundryOrder.model');
 const OwnerModel = require('../models/owner.model');
 const WalletTransaction = require('../models/walletTransaction.model');
 const { pageValidations } = require('../validations/page.validation');
+const TransactionModel = require('../models/transaction.model');
 
 const itemSchema = Joi.object({
   product_id: Joi.number().integer().allow(null),
@@ -154,6 +155,21 @@ const LaundryController = {
           created.items = await LaundryOrderModel.getItems(req.db, orderId);
           return response.success(res, created,
             'Pesanan dibuat, tapi saldo mitra tidak cukup untuk biaya transaksi — status dibuat BELUM LUNAS. Top up saldo lalu lunasi.');
+        } else {
+          // 🔥 CATAT KE LAPORAN (HEADER ONLY) - Aman dari isu qty desimal
+          await TransactionModel.create(req.db, {
+            store_id: parseInt(store_id),
+            user_id: userId,
+            total_cost: total,
+            payment_method: 'cash',
+            received_amount: total,
+            change_amount: 0,
+            payment_status: 'paid',
+            subtotal: total,
+            discount_total: 0,
+            tax: 0,
+            notes: `Laundry Order: LDY-${String(orderId).padStart(5, '0')}`,
+          });
         }
       }
 
@@ -219,6 +235,21 @@ const LaundryController = {
         await LaundryOrderModel.update(req.db, store_id, id, { payment_status: 'unpaid', paid_amount: 0 });
         return response.badRequest(res, 'Saldo mitra tidak cukup untuk biaya transaksi. Top up saldo dulu.');
       }
+
+      // 🔥 CATAT KE LAPORAN (HEADER ONLY) - Aman dari isu qty desimal
+      await TransactionModel.create(req.db, {
+        store_id: parseInt(store_id),
+        user_id: req.user.id,
+        total_cost: order.total,
+        payment_method: 'cash',
+        received_amount: order.total,
+        change_amount: 0,
+        payment_status: 'paid',
+        subtotal: order.total,
+        discount_total: 0,
+        tax: 0,
+        notes: `Laundry Order: ${order.order_no || `LDY-${String(id).padStart(5, '0')}`}`,
+      });
 
       const updated = await LaundryOrderModel.getById(req.db, store_id, id);
       updated.items = await LaundryOrderModel.getItems(req.db, id);
