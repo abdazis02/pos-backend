@@ -61,6 +61,14 @@ function isSuccessfulDigiflazzData(data) {
   return rc === '00' || status === 'sukses' || status === 'success' || status === '1';
 }
 
+function isTemporarySellerIssue(message) {
+  const text = String(message || '').toLowerCase();
+  return text.includes('cut off') ||
+    text.includes('perbaikan sistem seller') ||
+    text.includes('maintenance') ||
+    text.includes('gangguan seller');
+}
+
 function normalizeProductBrand(brand) {
   return String(brand || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
@@ -211,10 +219,21 @@ const PPOBController = {
       const data = result?.data || result;
 
       if (!isSuccessfulDigiflazzData(data)) {
+        if (isTemporarySellerIssue(data?.message)) {
+          return response.success(res, {
+            ...data,
+            customer_name: null,
+            name_check_available: false,
+          }, 'Cek nama e-money sementara tidak tersedia');
+        }
+
         return response.badRequest(res, data?.message || 'Gagal cek nama pengguna e-money');
       }
 
-      return response.success(res, data, 'Nama pengguna e-money berhasil ditemukan');
+      return response.success(res, {
+        ...data,
+        name_check_available: true,
+      }, 'Nama pengguna e-money berhasil ditemukan');
     } catch (error) {
       return response.error(res, error, 'Gagal cek nama pengguna e-money');
     }
