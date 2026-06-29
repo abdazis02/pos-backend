@@ -11,7 +11,7 @@ const { expireVA, createInvoice } = require("../utils/xendit");
 
 const topupValidation = Joi.object({
   amount: Joi.number().required().min(10000),
-  payment_method: Joi.string().valid('xendit_browser').required(),
+  payment_method: Joi.string().valid('xendit_browser', 'manual_bca').required(),
   phone_number: Joi.string().optional().allow('', null),
 });
 
@@ -25,6 +25,7 @@ const historyValidations = pageValidations.keys({
 
 // Biaya admin topup (menutup potongan Xendit ~Rp4.440 agar tidak rugi).
 const TOPUP_ADMIN_FEE = 5000;
+const MANUAL_TOPUP_EXPIRY_HOURS = 24;
 
 function normalizeXenditStatus(value) {
   const status = value?.toString().toUpperCase();
@@ -70,21 +71,24 @@ const WalletTopupController = {
       let checkout_url = null;
       const payment_method = value.payment_method;
       const order_id = 'TOPUP-' + moment().unix() + '-' + owner.id;
-      const admin_fee = TOPUP_ADMIN_FEE;
+      const isManualTopup = payment_method === 'manual_bca';
+      const admin_fee = isManualTopup ? 0 : TOPUP_ADMIN_FEE;
       const total_amount = Number(value.amount) + admin_fee;
 
-      const invoice = await createInvoice(
-        order_id,
-        total_amount,
-        owner.email,
-        `Topup Saldo Merchant: ${owner.name || owner.business_name || 'PIPos'}`,
-        {
-          topupAmount: value.amount,
-          adminFee: admin_fee,
-        }
-      );
-      xendit_id = invoice.id;
-      checkout_url = invoice.invoice_url;
+      if (!isManualTopup) {
+        const invoice = await createInvoice(
+          order_id,
+          total_amount,
+          owner.email,
+          `Topup Saldo Merchant: ${owner.name || owner.business_name || 'PIPos'}`,
+          {
+            topupAmount: value.amount,
+            adminFee: admin_fee,
+          }
+        );
+        xendit_id = invoice.id;
+        checkout_url = invoice.invoice_url;
+      }
 
       const data = {
         owner_id: owner.id,
@@ -98,7 +102,9 @@ const WalletTopupController = {
         total_amount: total_amount,
         status: 'pending',
         payment_method: payment_method,
-        expired_at: moment().add(60, 'minutes').format('YYYY-MM-DD HH:mm:ss'),
+        expired_at: isManualTopup
+          ? moment().add(MANUAL_TOPUP_EXPIRY_HOURS, 'hours').format('YYYY-MM-DD HH:mm:ss')
+          : moment().add(60, 'minutes').format('YYYY-MM-DD HH:mm:ss'),
       }
 
       const [id] = await trx("wallet_topups").insert(data);
