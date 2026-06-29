@@ -27,6 +27,12 @@ const purchaseSchema = Joi.object({
   mitra_markup: Joi.number().optional().default(0), // 🔥 Tambahan: Menangkap Keuntungan Kasir dari Frontend
 });
 
+const inquirySchema = Joi.object({
+  buyer_sku_code: Joi.string().required(),
+  customer_no: Joi.string().required(),
+  amount: Joi.number().positive().optional(),
+});
+
 function parseDigiflazzPrice(product) {
   return parseFloat(product?.price || product?.selling_price || product?.nominal || product?.harga || 0);
 }
@@ -163,7 +169,12 @@ const listSchema = Joi.object({
 const PPOBController = {
   async inquiry(req, res) {
     try {
-      const { buyer_sku_code, customer_no } = req.body;
+      const { value, error } = inquirySchema.validate(req.body, { stripUnknown: true });
+      if (error) {
+        return response.badRequest(res, error.details[0].message, error.details);
+      }
+
+      const { buyer_sku_code, customer_no, amount } = value;
       const ref_id = `INQ-${req.user.tenant_id}-${Date.now()}`;
 
       const product = await master('ppob_products')
@@ -175,7 +186,8 @@ const PPOBController = {
         : await Digiflazz.checkInquiry({
             buyer_sku_code,
             customer_no,
-            ref_id
+            ref_id,
+            amount,
           });
 
       const data = result?.data || result;

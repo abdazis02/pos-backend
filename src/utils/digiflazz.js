@@ -155,15 +155,21 @@ async function purchase({ buyer_sku_code, customer_no, ref_id, tr_id }) {
 /**
  * 🔥 Tambahan fungsi Cek Tagihan (Inquiry) khusus Pascabayar
  */
-async function checkInquiry({ buyer_sku_code, customer_no, ref_id }) {
+async function checkInquiry({ buyer_sku_code, customer_no, ref_id, amount }) {
   // ref_id wajib ada agar buildSignature bisa membuat tanda tangan
   const inquiryRefId = ref_id || `INQ-${Date.now()}`;
-  return sendDigiflazzRequest('transaction', {
+  const payload = {
     commands: 'inq-pasca',
     buyer_sku_code,
     customer_no,
     ref_id: inquiryRefId,
-  });
+  };
+
+  if (amount != null) {
+    payload.amount = amount;
+  }
+
+  return sendDigiflazzRequest('transaction', payload);
 }
 
 /**
