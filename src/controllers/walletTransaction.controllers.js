@@ -11,7 +11,10 @@ const { expireVA, createInvoice } = require("../utils/xendit");
 
 const topupValidation = Joi.object({
   amount: Joi.number().required().min(10000),
-  payment_method: Joi.string().valid('xendit_browser', 'manual_bca').required(),
+  payment_method: Joi.string()
+    .valid('xendit_browser', 'manual_bca', 'qris', 'va', 'ewallet', '', null)
+    .optional()
+    .default('xendit_browser'),
   phone_number: Joi.string().optional().allow('', null),
 });
 
@@ -32,6 +35,14 @@ function normalizeXenditStatus(value) {
   if (['COMPLETED', 'SUCCEEDED', 'SUCCESS', 'PAID'].includes(status)) return 'success';
   if (['FAILED', 'EXPIRED', 'VOIDED', 'CANCELLED', 'CANCELED'].includes(status)) return 'failed';
   return 'pending';
+}
+
+function normalizeTopupMethod(method) {
+  const value = (method || '').toString().trim().toLowerCase();
+  if (!value || value === 'xendit_browser') return 'xendit_browser';
+  if (value === 'manual_bca' || value === 'manual') return 'manual_bca';
+  if (['qris', 'va', 'ewallet'].includes(value)) return 'xendit_browser';
+  return 'xendit_browser';
 }
 
 const WalletTopupController = {
@@ -63,13 +74,17 @@ const WalletTopupController = {
     const trx = await master.transaction();
     try {
       const owner = await OwnerModel.getByTenantId(req.user.tenant_id);
+      if (!owner) {
+        await trx.rollback();
+        return response.notFound(res, 'Merchant tidak ditemukan');
+      }
 
       let xendit_id = null;
       let qris_url = null;
       let qr_string = null;
       let va_number = null;
       let checkout_url = null;
-      const payment_method = value.payment_method;
+      const payment_method = normalizeTopupMethod(value.payment_method);
       const order_id = 'TOPUP-' + moment().unix() + '-' + owner.id;
       const isManualTopup = payment_method === 'manual_bca';
       const admin_fee = isManualTopup ? 0 : TOPUP_ADMIN_FEE;
@@ -130,6 +145,9 @@ const WalletTopupController = {
     }
 
     const owner = await OwnerModel.getByTenantId(req.user.tenant_id)
+    if (!owner) {
+      return response.notFound(res, 'Merchant tidak ditemukan')
+    }
     const offset = (value.page - 1) * value.itemsPerPage
     const [data, total, filtered] = await Promise.all(
       WalletModel.paginateWalletTopup(
@@ -158,6 +176,9 @@ const WalletTopupController = {
     try {
       const { id } = req.params;
       const owner = await OwnerModel.getByTenantId(req.user.tenant_id);
+      if (!owner) {
+        return response.notFound(res, 'Merchant tidak ditemukan');
+      }
       const topup = await WalletModel.findWalletTopupById(id);
 
       if (!topup) {
@@ -179,6 +200,9 @@ const WalletTopupController = {
     try {
       const { id } = req.params;
       const owner = await OwnerModel.getByTenantId(req.user.tenant_id);
+      if (!owner) {
+        return response.notFound(res, 'Merchant tidak ditemukan');
+      }
 
       const topup = await WalletModel.findWalletTopupById(id);
 
