@@ -21,6 +21,14 @@ router.post(
   PPOBController.inquiry
 );
 
+router.post(
+  '/:store_id/ppob/emoney-name-check',
+  authMiddleware(['owner', 'admin', 'cashier']),
+  tenantResolver,
+  checkStore,
+  PPOBController.emoneyNameCheck
+);
+
 router.get(
   '/:store_id/ppob/orders',
   authMiddleware(['owner', 'admin', 'cashier']),
