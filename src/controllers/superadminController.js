@@ -1,4 +1,33 @@
 const master = require('../config/knexMaster'); // Menggunakan koneksi master Knex Anda
+const { getTenantConnection } = require('../config/knexTenant');
+
+const toNumber = (value) => Number(value || 0);
+
+const dayDiffFromNow = (dateValue) => {
+  if (!dateValue) return null;
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return null;
+  const diffMs = Date.now() - date.getTime();
+  return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+};
+
+const mapTopupRow = (row) => ({
+  id: row.id,
+  owner_id: row.owner_id,
+  nama_toko: row.nama_toko,
+  amount: toNumber(row.amount),
+  admin_fee: toNumber(row.admin_fee),
+  total_amount: toNumber(row.total_amount || row.amount),
+  status: row.status,
+  payment_method: row.payment_method,
+  bank_code: row.bank_code,
+  channel_code: row.channel_code,
+  va_number: row.va_number,
+  xendit_id: row.xendit_id,
+  created_at: row.created_at,
+  paid_at: row.paid_at,
+  expired_at: row.expired_at,
+});
 
 // ============================================
 // 1. MANAJEMEN KLIEN / MITRA TOKO
@@ -24,6 +53,391 @@ exports.getClients = async (req, res) => {
   } catch (error) {
     console.error("Error getClients:", error);
     res.status(500).json({ success: false, message: "Terjadi kesalahan pada server" });
+  }
+};
+
+exports.getClientSummary = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const owner = await master('owners as o')
+      .leftJoin('tenants as t', 'o.id', 't.owner_id')
+      .where('o.id', id)
+      .select(
+        'o.id',
+        'o.business_name as nama_toko',
+        'o.business_category',
+        'o.email',
+        'o.phone as no_hp',
+        'o.address as alamat',
+        'o.wallet_balance as saldo_dompet',
+        'o.status',
+        'o.created_at as tanggal_gabung',
+        'o.updated_at as updated_at',
+        't.id as tenant_id',
+        't.db_name',
+        't.db_user',
+        't.db_pass'
+      )
+      .first();
+
+    if (!owner) {
+      return res.status(404).json({ success: false, message: 'Mitra tidak ditemukan' });
+    }
+
+    const walletStatsRow = await master('wallet_transactions')
+      .where('owner_id', owner.id)
+      .select(
+        master.raw('COUNT(*) as total_wallet_mutations'),
+        master.raw("COUNT(CASE WHEN reference_type = 'transactions' THEN 1 END) as pos_fee_count"),
+        master.raw("COUNT(DISTINCT CASE WHEN reference_type = 'ppob_orders' THEN reference_id END) as ppob_count"),
+        master.raw("COALESCE(SUM(CASE WHEN type IN ('transaction_fee', 'ppob_margin', 'ppob_fee') THEN ABS(amount) ELSE 0 END), 0) as total_admin_profit"),
+        master.raw('MAX(created_at) as last_wallet_activity_at')
+      )
+      .first();
+
+    const topupStatsRow = await master('wallet_topups')
+      .where('owner_id', owner.id)
+      .select(
+        master.raw('COUNT(*) as total_topup_count'),
+        master.raw("COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_topup_count"),
+        master.raw("COUNT(CASE WHEN status = 'success' THEN 1 END) as success_topup_count"),
+        master.raw("COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_topup_count"),
+        master.raw("COALESCE(SUM(CASE WHEN status = 'success' THEN amount ELSE 0 END), 0) as total_success_topup"),
+        master.raw("COALESCE(SUM(CASE WHEN status = 'pending' THEN COALESCE(total_amount, amount) ELSE 0 END), 0) as total_pending_topup_bill"),
+        master.raw('MAX(COALESCE(paid_at, created_at)) as last_topup_at')
+      )
+      .first();
+
+    const recentTopups = await master('wallet_topups as wt')
+      .join('owners as o', 'o.id', 'wt.owner_id')
+      .where('wt.owner_id', owner.id)
+      .select(
+        'wt.id',
+        'wt.owner_id',
+        'o.business_name as nama_toko',
+        'wt.amount',
+        'wt.admin_fee',
+        'wt.total_amount',
+        'wt.status',
+        'wt.payment_method',
+        'wt.bank_code',
+        'wt.channel_code',
+        'wt.va_number',
+        'wt.xendit_id',
+        'wt.created_at',
+        'wt.paid_at',
+        'wt.expired_at'
+      )
+      .orderBy('wt.created_at', 'desc')
+      .limit(10);
+
+    const recentWalletTransactions = await master('wallet_transactions')
+      .where('owner_id', owner.id)
+      .select(
+        'id',
+        'type',
+        'amount',
+        'balance_after',
+        'reference_type',
+        'reference_id',
+        'description',
+        'created_at'
+      )
+      .orderBy('created_at', 'desc')
+      .limit(10);
+
+    const tenantData = {
+      stores: [],
+      pos: {
+        total_count: 0,
+        total_amount: 0,
+        paid_count: 0,
+        pending_count: 0,
+        refunded_count: 0,
+        last_transaction_at: null,
+      },
+      ppob: {
+        total_count: 0,
+        total_amount: 0,
+        success_count: 0,
+        pending_count: 0,
+        failed_count: 0,
+        last_transaction_at: null,
+      },
+      recent_pos: [],
+      recent_ppob: [],
+      error: null,
+    };
+
+    if (owner.db_name && owner.db_user) {
+      try {
+        const tenantDb = getTenantConnection({
+          db_name: owner.db_name,
+          db_user: owner.db_user,
+          db_pass: owner.db_pass,
+        });
+
+        const stores = await tenantDb('stores')
+          .select('id', 'name', 'type', 'address', 'phone', 'created_at', 'updated_at')
+          .orderBy('id', 'asc')
+          .catch(() => []);
+
+        const posByStore = await tenantDb('transactions')
+          .select('store_id')
+          .count('* as pos_count')
+          .sum({ pos_total: 'total_cost' })
+          .max({ last_pos_at: 'created_at' })
+          .groupBy('store_id')
+          .catch(() => []);
+
+        const ppobByStore = await tenantDb('ppob_orders')
+          .select('store_id')
+          .count('* as ppob_count')
+          .sum({ ppob_total: 'sale_price' })
+          .max({ last_ppob_at: 'created_at' })
+          .groupBy('store_id')
+          .catch(() => []);
+
+        const posByStoreMap = new Map(posByStore.map((row) => [Number(row.store_id), row]));
+        const ppobByStoreMap = new Map(ppobByStore.map((row) => [Number(row.store_id), row]));
+
+        tenantData.stores = stores.map((store) => {
+          const pos = posByStoreMap.get(Number(store.id)) || {};
+          const ppob = ppobByStoreMap.get(Number(store.id)) || {};
+          const lastDates = [pos.last_pos_at, ppob.last_ppob_at]
+            .filter(Boolean)
+            .map((value) => new Date(value))
+            .filter((date) => !Number.isNaN(date.getTime()));
+          return {
+            ...store,
+            pos_count: parseInt(pos.pos_count || 0, 10),
+            pos_total: toNumber(pos.pos_total),
+            ppob_count: parseInt(ppob.ppob_count || 0, 10),
+            ppob_total: toNumber(ppob.ppob_total),
+            last_activity_at: lastDates.length
+              ? new Date(Math.max(...lastDates.map((date) => date.getTime()))).toISOString()
+              : null,
+          };
+        });
+
+        tenantData.pos = await tenantDb('transactions')
+          .select(
+            tenantDb.raw('COUNT(*) as total_count'),
+            tenantDb.raw('COALESCE(SUM(total_cost), 0) as total_amount'),
+            tenantDb.raw("COUNT(CASE WHEN payment_status = 'paid' THEN 1 END) as paid_count"),
+            tenantDb.raw("COUNT(CASE WHEN payment_status = 'pending' THEN 1 END) as pending_count"),
+            tenantDb.raw("COUNT(CASE WHEN payment_status = 'refunded' THEN 1 END) as refunded_count"),
+            tenantDb.raw('MAX(created_at) as last_transaction_at')
+          )
+          .first()
+          .catch(() => tenantData.pos);
+
+        tenantData.ppob = await tenantDb('ppob_orders')
+          .select(
+            tenantDb.raw('COUNT(*) as total_count'),
+            tenantDb.raw('COALESCE(SUM(sale_price), 0) as total_amount'),
+            tenantDb.raw("COUNT(CASE WHEN status = 'success' THEN 1 END) as success_count"),
+            tenantDb.raw("COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count"),
+            tenantDb.raw("COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_count"),
+            tenantDb.raw('MAX(created_at) as last_transaction_at')
+          )
+          .first()
+          .catch(() => tenantData.ppob);
+
+        tenantData.recent_pos = await tenantDb('transactions as tr')
+          .leftJoin('stores as s', 's.id', 'tr.store_id')
+          .select(
+            'tr.id',
+            's.name as store_name',
+            'tr.total_cost',
+            'tr.payment_method',
+            'tr.payment_status',
+            'tr.customer_name',
+            'tr.created_at'
+          )
+          .orderBy('tr.created_at', 'desc')
+          .limit(8)
+          .catch(() => []);
+
+        tenantData.recent_ppob = await tenantDb('ppob_orders as po')
+          .leftJoin('stores as s', 's.id', 'po.store_id')
+          .select(
+            'po.id',
+            's.name as store_name',
+            'po.product_name',
+            'po.buyer_sku_code',
+            'po.customer_no',
+            'po.sale_price',
+            'po.status',
+            'po.created_at'
+          )
+          .orderBy('po.created_at', 'desc')
+          .limit(8)
+          .catch(() => []);
+      } catch (tenantError) {
+        tenantData.error = tenantError.message;
+      }
+    }
+
+    const candidateActivityDates = [
+      walletStatsRow?.last_wallet_activity_at,
+      topupStatsRow?.last_topup_at,
+      tenantData.pos?.last_transaction_at,
+      tenantData.ppob?.last_transaction_at,
+    ].filter(Boolean).map((value) => new Date(value)).filter((date) => !Number.isNaN(date.getTime()));
+
+    const lastActivityDate = candidateActivityDates.length
+      ? new Date(Math.max(...candidateActivityDates.map((date) => date.getTime())))
+      : null;
+
+    const statusLower = String(owner.status || '').toLowerCase();
+    const isActive = statusLower === 'active' || statusLower === 'aktif';
+
+    res.json({
+      success: true,
+      data: {
+        client: {
+          id: owner.id,
+          nama_toko: owner.nama_toko,
+          business_category: owner.business_category,
+          email: owner.email,
+          no_hp: owner.no_hp,
+          alamat: owner.alamat,
+          saldo_dompet: toNumber(owner.saldo_dompet),
+          status: owner.status,
+          tanggal_gabung: owner.tanggal_gabung,
+          updated_at: owner.updated_at,
+          tenant_id: owner.tenant_id,
+        },
+        summary: {
+          wallet_mutations: parseInt(walletStatsRow?.total_wallet_mutations || 0, 10),
+          pos_fee_count: parseInt(walletStatsRow?.pos_fee_count || 0, 10),
+          ppob_count: parseInt(walletStatsRow?.ppob_count || 0, 10),
+          total_admin_profit: toNumber(walletStatsRow?.total_admin_profit),
+          total_topup_count: parseInt(topupStatsRow?.total_topup_count || 0, 10),
+          success_topup_count: parseInt(topupStatsRow?.success_topup_count || 0, 10),
+          pending_topup_count: parseInt(topupStatsRow?.pending_topup_count || 0, 10),
+          failed_topup_count: parseInt(topupStatsRow?.failed_topup_count || 0, 10),
+          total_success_topup: toNumber(topupStatsRow?.total_success_topup),
+          total_pending_topup_bill: toNumber(topupStatsRow?.total_pending_topup_bill),
+          last_activity_at: lastActivityDate ? lastActivityDate.toISOString() : null,
+          inactive_days: dayDiffFromNow(lastActivityDate),
+          suspended_days: isActive ? null : dayDiffFromNow(owner.updated_at || owner.tanggal_gabung),
+        },
+        tenant: {
+          ...tenantData,
+          pos: {
+            total_count: parseInt(tenantData.pos?.total_count || 0, 10),
+            total_amount: toNumber(tenantData.pos?.total_amount),
+            paid_count: parseInt(tenantData.pos?.paid_count || 0, 10),
+            pending_count: parseInt(tenantData.pos?.pending_count || 0, 10),
+            refunded_count: parseInt(tenantData.pos?.refunded_count || 0, 10),
+            last_transaction_at: tenantData.pos?.last_transaction_at || null,
+          },
+          ppob: {
+            total_count: parseInt(tenantData.ppob?.total_count || 0, 10),
+            total_amount: toNumber(tenantData.ppob?.total_amount),
+            success_count: parseInt(tenantData.ppob?.success_count || 0, 10),
+            pending_count: parseInt(tenantData.ppob?.pending_count || 0, 10),
+            failed_count: parseInt(tenantData.ppob?.failed_count || 0, 10),
+            last_transaction_at: tenantData.ppob?.last_transaction_at || null,
+          },
+        },
+        recent_topups: recentTopups.map(mapTopupRow),
+        recent_wallet_transactions: recentWalletTransactions.map((row) => ({
+          ...row,
+          amount: toNumber(row.amount),
+          balance_after: toNumber(row.balance_after),
+        })),
+      },
+    });
+  } catch (error) {
+    console.error('Error getClientSummary:', error);
+    res.status(500).json({ success: false, message: 'Gagal mengambil rekap mitra' });
+  }
+};
+
+exports.getTopupHistory = async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 25, 100);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const offset = (page - 1) * limit;
+    const status = req.query.status;
+    const search = String(req.query.search || '').trim();
+
+    let query = master('wallet_topups as wt').join('owners as o', 'o.id', 'wt.owner_id');
+
+    if (status && status !== 'Semua') {
+      query = query.where('wt.status', status);
+    }
+
+    if (search) {
+      query = query.where(function () {
+        this.where('o.business_name', 'like', `%${search}%`)
+          .orWhere('wt.payment_method', 'like', `%${search}%`)
+          .orWhere('wt.bank_code', 'like', `%${search}%`)
+          .orWhere('wt.channel_code', 'like', `%${search}%`)
+          .orWhere('wt.va_number', 'like', `%${search}%`)
+          .orWhere('wt.xendit_id', 'like', `%${search}%`);
+      });
+    }
+
+    const countRow = await query.clone().count('wt.id as total').first();
+    const total = parseInt(countRow?.total || 0, 10);
+
+    const rows = await query.clone()
+      .select(
+        'wt.id',
+        'wt.owner_id',
+        'o.business_name as nama_toko',
+        'wt.amount',
+        'wt.admin_fee',
+        'wt.total_amount',
+        'wt.status',
+        'wt.payment_method',
+        'wt.bank_code',
+        'wt.channel_code',
+        'wt.va_number',
+        'wt.xendit_id',
+        'wt.created_at',
+        'wt.paid_at',
+        'wt.expired_at'
+      )
+      .orderBy('wt.created_at', 'desc')
+      .limit(limit)
+      .offset(offset);
+
+    const statsRow = await master('wallet_topups')
+      .select(
+        master.raw('COUNT(*) as total_count'),
+        master.raw("COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count"),
+        master.raw("COUNT(CASE WHEN status = 'success' THEN 1 END) as success_count"),
+        master.raw("COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_count"),
+        master.raw("COALESCE(SUM(CASE WHEN status = 'success' THEN amount ELSE 0 END), 0) as success_amount"),
+        master.raw("COALESCE(SUM(CASE WHEN status = 'pending' THEN COALESCE(total_amount, amount) ELSE 0 END), 0) as pending_bill_amount"),
+        master.raw('COALESCE(SUM(admin_fee), 0) as admin_fee_total')
+      )
+      .first();
+
+    res.json({
+      success: true,
+      total,
+      page,
+      limit,
+      stats: {
+        total: parseInt(statsRow?.total_count || 0, 10),
+        pending: parseInt(statsRow?.pending_count || 0, 10),
+        success: parseInt(statsRow?.success_count || 0, 10),
+        failed: parseInt(statsRow?.failed_count || 0, 10),
+        success_amount: toNumber(statsRow?.success_amount),
+        pending_bill_amount: toNumber(statsRow?.pending_bill_amount),
+        admin_fee_total: toNumber(statsRow?.admin_fee_total),
+      },
+      data: rows.map(mapTopupRow),
+    });
+  } catch (error) {
+    console.error('Error getTopupHistory:', error);
+    res.status(500).json({ success: false, message: 'Gagal mengambil riwayat topup' });
   }
 };
 

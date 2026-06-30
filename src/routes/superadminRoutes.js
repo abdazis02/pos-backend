@@ -47,6 +47,7 @@ router.get('/reports/monthly', requireSuperadmin, superadminController.getMonthl
 
 // --- MANAJEMEN KLIEN / MITRA ---
 router.get('/clients', requireSuperadmin, superadminController.getClients);
+router.get('/clients/:id/summary', requireSuperadmin, superadminController.getClientSummary);
 router.post('/clients', requireSuperadmin, auditLog('CREATE_CLIENT', 'client', (req) => `Mitra baru: ${req.body.business_name||''}`), superadminController.createClient);
 router.put('/clients/:id/status', requireSuperadmin, auditLog('UPDATE_STATUS', 'client', (req) => `Status mitra ID ${req.params.id}: ${req.body.status||''}`), superadminController.updateClientStatus);
 router.put('/clients/:id', requireSuperadmin, auditLog('UPDATE_CLIENT', 'client', (req) => `Data mitra ID ${req.params.id} diperbarui`), superadminController.updateClient);
@@ -63,6 +64,7 @@ router.get('/transactions/recent', requireSuperadmin, superadminController.getTr
 // --- TOPUP MANUAL ---
 const adminTenantController = require('../controllers/adminTenant.controllers');
 router.get('/topups/pending', requireSuperadmin, adminTenantController.getPendingTopups);
+router.get('/topups/history', requireSuperadmin, superadminController.getTopupHistory);
 router.put('/topups/:id/approve', requireSuperadmin, adminTenantController.approveTopup);
 router.put('/topups/:id/reject', requireSuperadmin, adminTenantController.rejectTopup);
 
