@@ -29,6 +29,213 @@ const mapTopupRow = (row) => ({
   expired_at: row.expired_at,
 });
 
+const QUICK_RANGE_CONFIG = {
+  today: { label: 'Hari Ini', days: 1 },
+  '7d': { label: '7 Hari', days: 7 },
+  '30d': { label: '1 Bulan', days: 30 },
+  '90d': { label: '3 Bulan', days: 90 },
+  all: { label: 'All Time', days: null },
+};
+
+const normalizeQuickRange = (value) => {
+  const key = String(value || '').toLowerCase();
+  return Object.prototype.hasOwnProperty.call(QUICK_RANGE_CONFIG, key) ? key : null;
+};
+
+const resolveRangeBounds = (rangeValue, fallbackDays = 7) => {
+  const normalized = normalizeQuickRange(rangeValue);
+  if (normalized === 'all') {
+    return { key: 'all', label: QUICK_RANGE_CONFIG.all.label, start: null, end: null };
+  }
+
+  const days = normalized
+    ? QUICK_RANGE_CONFIG[normalized].days
+    : (Number.isFinite(fallbackDays) && fallbackDays > 0 ? fallbackDays : 7);
+
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+
+  const start = new Date(end);
+  start.setDate(start.getDate() - (days - 1));
+  start.setHours(0, 0, 0, 0);
+
+  const key = normalized || (days === 1 ? 'today' : `${days}d`);
+  const label = QUICK_RANGE_CONFIG[normalized || '7d']?.label || `${days} Hari`;
+
+  return { key, label, start, end };
+};
+
+const applyDateRange = (query, column, rangeValue, fallbackDays = 7) => {
+  const range = resolveRangeBounds(rangeValue, fallbackDays);
+  if (range.start && range.end) {
+    const pad = (n) => String(n).padStart(2, '0');
+    const formatSql = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    query.whereBetween(column, [formatSql(range.start), formatSql(range.end)]);
+  }
+  return range;
+};
+
+const normalizeTransactionStatus = (detail) => {
+  if (!detail) return 'Sukses';
+  if (detail.status === 'pending' || detail.payment_status === 'pending') return 'Pending';
+  if (detail.status === 'failed' || detail.payment_status === 'failed') return 'Gagal';
+  return 'Sukses';
+};
+
+const matchesStatusFilter = (status, statusFilter) => {
+  if (!statusFilter || statusFilter === 'Semua') return true;
+  return String(status || '').toLowerCase() === String(statusFilter).toLowerCase();
+};
+
+const matchesTransactionSearch = (row, query) => {
+  const term = String(query || '').trim().toLowerCase();
+  if (!term) return true;
+
+  return [
+    row?.tanggal,
+    row?.nama_toko,
+    row?.tipe,
+    row?.produk,
+    row?.no_tujuan,
+    row?.ref_id,
+    row?.metode_pembayaran,
+    row?.status,
+  ].some((value) => String(value || '').toLowerCase().includes(term));
+};
+
+const buildTransactionStatsFromRows = (rows) => ({
+  total: rows.length,
+  pos: rows.filter((row) => String(row.tipe || '').toLowerCase().includes('pos')).length,
+  ppob: rows.filter((row) => String(row.tipe || '').toLowerCase().includes('ppob')).length,
+  pending: rows.filter((row) => row.status === 'Pending').length,
+  laba: rows.reduce((sum, row) => sum + toNumber(row.laba), 0),
+});
+
+const formatDateKey = (dateValue) => {
+  const date = new Date(dateValue);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const buildDateSeries = (startDate, endDate) => {
+  const dates = [];
+  const cursor = new Date(startDate);
+  const end = new Date(endDate);
+  cursor.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+
+  while (cursor <= end) {
+    dates.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return dates;
+};
+
+const enrichTransactionLogs = async (logs) => {
+  if (!Array.isArray(logs) || logs.length === 0) return [];
+
+  const formattedData = [];
+  const uniqueMap = new Map();
+  const uniqueOwnerIds = [...new Set(logs.map((log) => log.owner_id).filter(Boolean))];
+  const tenants = uniqueOwnerIds.length
+    ? await master('tenants').whereIn('owner_id', uniqueOwnerIds)
+    : [];
+  const tenantMap = new Map(tenants.map((tenant) => [tenant.owner_id, tenant]));
+
+  const logsWithDetails = await Promise.all(
+    logs.map(async (log) => {
+      let detail = null;
+      try {
+        const tenantInfo = tenantMap.get(log.owner_id);
+        if (tenantInfo?.db_name) {
+          const clientDb = getTenantConnection({
+            db_name: tenantInfo.db_name,
+            db_user: tenantInfo.db_user,
+            db_pass: tenantInfo.db_pass,
+          });
+
+          if (log.reference_type === 'transactions' && log.reference_id) {
+            detail = await clientDb('transactions').where('id', log.reference_id).first();
+          } else if (log.reference_type === 'ppob_orders' && log.reference_id) {
+            detail = await clientDb('ppob_orders').where('id', log.reference_id).first();
+          }
+        }
+      } catch (error) {
+        detail = null;
+      }
+      return { log, detail };
+    })
+  );
+
+  for (const { log, detail } of logsWithDetails) {
+    let tipe = log.reference_type === 'transactions'
+      ? 'POS'
+      : (log.reference_type === 'ppob_orders' ? 'PPOB' : log.tipe);
+
+    const status = normalizeTransactionStatus(detail);
+    let laba = Math.abs(parseFloat(log.amount)) || 0;
+    let grandTotal = detail ? parseFloat(detail.total_cost || detail.amount || detail.sale_price || detail.price || 0) : 0;
+    let hargaModal = detail ? parseFloat(detail.capital_price || detail.amount || detail.price || 0) : 0;
+
+    if (log.tipe === 'topup' || tipe === 'topup') {
+      grandTotal = Math.abs(parseFloat(log.amount)) || 0;
+      laba = 0;
+      hargaModal = 0;
+    }
+
+    if (log.reference_type === 'ppob_orders') {
+      tipe = 'PPOB';
+      const uniqueKey = `ppob-${log.owner_id}-${log.reference_id}`;
+
+      if (!uniqueMap.has(uniqueKey)) {
+        uniqueMap.set(uniqueKey, {
+          id: log.id,
+          tanggal: log.tanggal,
+          nama_toko: log.nama_toko,
+          tipe,
+          produk: detail ? (detail.product_name || detail.description || log.produk) : log.produk,
+          no_tujuan: detail ? (detail.target_number || '-') : '-',
+          ref_id: log.reference_id || '-',
+          harga_modal: hargaModal,
+          tax: detail ? parseFloat(detail.tax || 0) : 0,
+          grand_total: grandTotal,
+          laba: 0,
+          metode_pembayaran: detail ? (detail.payment_method || '-') : '-',
+          status,
+        });
+        formattedData.push(uniqueMap.get(uniqueKey));
+      }
+
+      const entry = uniqueMap.get(uniqueKey);
+      if (['transaction_fee', 'ppob_margin', 'ppob_fee'].includes(log.tipe)) {
+        entry.laba += laba;
+      }
+      continue;
+    }
+
+    formattedData.push({
+      id: log.id,
+      tanggal: log.tanggal,
+      nama_toko: log.nama_toko,
+      tipe,
+      produk: detail ? (detail.product_name || detail.description || log.produk) : log.produk,
+      no_tujuan: detail ? (detail.target_number || '-') : '-',
+      ref_id: log.reference_id || '-',
+      harga_modal: hargaModal,
+      tax: detail ? parseFloat(detail.tax || 0) : 0,
+      grand_total: grandTotal,
+      laba,
+      metode_pembayaran: detail ? (detail.payment_method || '-') : '-',
+      status,
+    });
+  }
+
+  return formattedData;
+};
+
 // ============================================
 // 1. MANAJEMEN KLIEN / MITRA TOKO
 // ============================================
@@ -669,12 +876,15 @@ exports.getDashboardChart = async (req, res) => {
 
 exports.getTransactions = async (req, res) => {
   try {
-    const limit  = Math.min(parseInt(req.query.limit) || 50, 500);
-    const page   = Math.max(parseInt(req.query.page)  || 1,  1);
+    const limit  = Math.min(parseInt(req.query.limit, 10) || 50, 500);
+    const page   = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const offset = (page - 1) * limit;
 
-    const typeFilter   = req.query.type;
-    const searchFilter = req.query.search;
+    const typeFilter = req.query.type;
+    const searchFilter = String(req.query.search || '').trim();
+    const statusFilter = String(req.query.status || 'Semua');
+    const rangeFilter = String(req.query.range || 'all').toLowerCase();
+    const hasSearchFilter = searchFilter.length > 0;
 
     let baseQuery = master('wallet_transactions as wt').join('owners as o', 'o.id', 'wt.owner_id');
 
@@ -684,157 +894,86 @@ exports.getTransactions = async (req, res) => {
       baseQuery = baseQuery.where('wt.reference_type', 'ppob_orders');
     }
 
-    if (searchFilter) {
-      baseQuery = baseQuery.where(function() {
-        this.where('wt.reference_id', 'like', `%${searchFilter}%`)
-            .orWhere('o.business_name', 'like', `%${searchFilter}%`)
-            .orWhere('wt.description', 'like', `%${searchFilter}%`);
+    const rangeInfo = applyDateRange(baseQuery, 'wt.created_at', rangeFilter, 7);
+    const selectColumns = [
+      'wt.id',
+      master.raw("DATE_FORMAT(wt.created_at, '%Y-%m-%d %H:%i') as tanggal"),
+      'o.business_name as nama_toko',
+      'wt.type as tipe',
+      'wt.description as produk',
+      'wt.amount',
+      'wt.balance_after',
+      'wt.reference_type',
+      'wt.reference_id',
+      'o.id as owner_id',
+    ];
+
+    if (statusFilter !== 'Semua' || hasSearchFilter) {
+      const expandedLimit = Math.min(Math.max(page * limit * 16, 1000), 10000);
+      const candidateLogs = await baseQuery.clone()
+        .select(selectColumns)
+        .orderBy('wt.created_at', 'desc')
+        .limit(expandedLimit);
+
+      const formattedData = await enrichTransactionLogs(candidateLogs);
+      const filteredData = formattedData.filter((row) => (
+        matchesStatusFilter(row.status, statusFilter)
+        && matchesTransactionSearch(row, searchFilter)
+      ));
+      const pagedData = filteredData.slice(offset, offset + limit);
+      const stats = buildTransactionStatsFromRows(filteredData);
+
+      return res.json({
+        success: true,
+        total: filteredData.length,
+        stats,
+        range: rangeInfo.key,
+        data: pagedData,
       });
     }
 
-    const countRow = await baseQuery.clone().count('wt.id as total').first();
-    const total = parseInt(countRow.total) || 0;
-
-    // 🔥 OPTIMASI 1: Gabungkan 4 query statistik berat menjadi 1 kali full table scan
-    const statsRow = await master('wallet_transactions')
+    const statsRow = await baseQuery.clone()
       .select(
-        master.raw("COUNT(CASE WHEN reference_type = 'transactions' THEN 1 END) as pos_count"),
-        master.raw("COUNT(CASE WHEN reference_type = 'ppob_orders' THEN 1 END) as ppob_count"),
-        master.raw("COUNT(*) as total_count"),
-        master.raw("COALESCE(SUM(CASE WHEN type IN ('transaction_fee', 'ppob_margin', 'ppob_fee') THEN ABS(amount) ELSE 0 END), 0) as total_laba")
+        master.raw(`
+          COUNT(DISTINCT CASE
+            WHEN wt.reference_type IN ('transactions', 'ppob_orders') AND wt.reference_id IS NOT NULL
+              THEN CONCAT(wt.reference_type, '-', wt.reference_id)
+            ELSE CONCAT('wallet-', wt.id)
+          END) as total_count
+        `),
+        master.raw(`
+          COUNT(DISTINCT CASE
+            WHEN wt.reference_type = 'transactions' AND wt.reference_id IS NOT NULL
+              THEN CONCAT('transactions-', wt.reference_id)
+          END) as pos_count
+        `),
+        master.raw(`
+          COUNT(DISTINCT CASE
+            WHEN wt.reference_type = 'ppob_orders' AND wt.reference_id IS NOT NULL
+              THEN CONCAT('ppob_orders-', wt.reference_id)
+          END) as ppob_count
+        `),
+        master.raw("COALESCE(SUM(CASE WHEN wt.type IN ('transaction_fee', 'ppob_margin', 'ppob_fee') THEN ABS(wt.amount) ELSE 0 END), 0) as total_laba")
       )
       .first();
 
-    const stats = {
-      total: parseInt(statsRow?.total_count) || 0,
-      pos: parseInt(statsRow?.pos_count) || 0,
-      ppob: parseInt(statsRow?.ppob_count) || 0,
-      pending: 0,
-      laba: parseFloat(statsRow?.total_laba) || 0,
-    };
-
+    const total = parseInt(statsRow?.total_count || 0, 10);
     const logs = await baseQuery.clone()
-      .select(
-        'wt.id',
-        master.raw("DATE_FORMAT(wt.created_at, '%Y-%m-%d %H:%i') as tanggal"),
-        'o.business_name as nama_toko',
-        'wt.type as tipe',
-        'wt.description as produk',
-        'wt.amount',
-        'wt.balance_after',
-        'wt.reference_type',
-        'wt.reference_id',
-        'o.id as owner_id' // HANYA AMBIL owner_id, sisanya dicari di tabel tenants
-      )
+      .select(selectColumns)
       .orderBy('wt.created_at', 'desc')
       .limit(limit)
       .offset(offset);
 
-    const { getTenantConnection } = require('../config/knexTenant');
-    const formattedData = [];
-    const uniqueMap = new Map();
+    const formattedData = await enrichTransactionLogs(logs);
+    const stats = {
+      total,
+      pos: parseInt(statsRow?.pos_count || 0, 10),
+      ppob: parseInt(statsRow?.ppob_count || 0, 10),
+      pending: 0,
+      laba: toNumber(statsRow?.total_laba),
+    };
 
-    // 🔥 OPTIMASI 2: Ambil semua data tenant dalam 1 query saja untuk menghindari N+1 query ke DB master
-    const uniqueOwnerIds = [...new Set(logs.map(l => l.owner_id))];
-    const tenants = await master('tenants').whereIn('owner_id', uniqueOwnerIds);
-    const tenantMap = new Map(tenants.map(t => [t.owner_id, t]));
-
-    // 🔥 OPTIMASI 3: Jalankan query ke masing-masing database tenant secara PARALEL dengan Promise.all
-    const logsWithDetails = await Promise.all(
-      logs.map(async (l) => {
-        let detail = null;
-        try {
-          const tenantInfo = tenantMap.get(l.owner_id);
-          if (tenantInfo && tenantInfo.db_name) {
-            const clientDb = getTenantConnection({
-              db_name: tenantInfo.db_name,
-              db_user: tenantInfo.db_user,
-              db_pass: tenantInfo.db_pass
-            });
-
-            if (l.reference_type === 'transactions' && l.reference_id) {
-              detail = await clientDb('transactions').where('id', l.reference_id).first();
-            } else if (l.reference_type === 'ppob_orders' && l.reference_id) {
-              detail = await clientDb('ppob_orders').where('id', l.reference_id).first();
-            }
-          }
-        } catch (e) {
-          // Abaikan jika database tenant tertentu bermasalah
-        }
-        return { log: l, detail };
-      })
-    );
-
-    // 4. Proses formatting data
-    for (let { log: l, detail } of logsWithDetails) {
-      let tipe = l.reference_type === 'transactions' ? 'POS' : (l.reference_type === 'ppob_orders' ? 'PPOB' : l.tipe);
-      
-      let status = 'Sukses';
-      if (detail) {
-         if (detail.status === 'pending' || detail.payment_status === 'pending') status = 'Pending';
-         else if (detail.status === 'failed' || detail.payment_status === 'failed') status = 'Gagal';
-      }
-
-      let laba = Math.abs(parseFloat(l.amount)) || 0;
-      let grand_total = detail ? parseFloat(detail.total_cost || detail.amount || detail.sale_price || detail.price || 0) : 0;
-      let harga_modal = detail ? parseFloat(detail.capital_price || detail.amount || detail.price || 0) : 0;
-
-      if (l.tipe === 'topup' || tipe === 'topup') {
-         grand_total = Math.abs(parseFloat(l.amount)) || 0;
-         laba = 0; // Top-up bukan margin/laba
-         harga_modal = 0;
-      }
-      
-      // GABUNGKAN PPOB MENJADI 1 BARIS
-      if (l.reference_type === 'ppob_orders') {
-         tipe = 'PPOB';
-         const uniqueKey = 'ppob-' + l.owner_id + '-' + l.reference_id;
-         
-         if (!uniqueMap.has(uniqueKey)) {
-            uniqueMap.set(uniqueKey, {
-               id: l.id,
-               tanggal: l.tanggal,
-               nama_toko: l.nama_toko,
-               tipe: tipe,
-               produk: detail ? (detail.product_name || detail.description || l.produk) : l.produk,
-               no_tujuan: detail ? (detail.target_number || '-') : '-',
-               ref_id: l.reference_id || '-',
-               harga_modal: harga_modal,
-               tax: detail ? parseFloat(detail.tax || 0) : 0,
-               grand_total: grand_total,
-               laba: 0,
-               metode_pembayaran: detail ? (detail.payment_method || '-') : '-',
-               status: status
-            });
-            formattedData.push(uniqueMap.get(uniqueKey));
-         }
-
-         const entry = uniqueMap.get(uniqueKey);
-         if (['transaction_fee', 'ppob_margin', 'ppob_fee'].includes(l.tipe)) {
-             entry.laba += laba; // Hanya hitung margin/fee sungguhan, BUKAN refund!
-         }
-         continue; // Selesai proses baris PPOB ini
-      }
-
-      // Baris Non-PPOB (POS / Topup)
-      formattedData.push({
-        id: l.id,
-        tanggal: l.tanggal,
-        nama_toko: l.nama_toko,
-        tipe: tipe,
-        produk: detail ? (detail.product_name || detail.description || l.produk) : l.produk,
-        no_tujuan: detail ? (detail.target_number || '-') : '-',
-        ref_id: l.reference_id || '-',
-        harga_modal: harga_modal,
-        tax: detail ? parseFloat(detail.tax || 0) : 0,
-        grand_total: grand_total,
-        laba: laba,
-        metode_pembayaran: detail ? (detail.payment_method || '-') : '-',
-        status: status
-      });
-    }
-
-    res.json({ success: true, total, stats, data: formattedData });
+    res.json({ success: true, total, stats, range: rangeInfo.key, data: formattedData });
   } catch (e) {
     console.error('getTransactions error:', e.message);
     res.status(500).json({ success: false, message: e.message });
@@ -1179,37 +1318,82 @@ exports.getLeaderboard = async (req, res) => {
 // REKONSILIASI
 exports.getReconciliation = async (req, res) => {
   try {
-    const days = parseInt(req.query.days) || 7;
-    const rows = [];
-    for (let i = days - 1; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      d.setHours(0, 0, 0, 0);
-      const dEnd = new Date(d);
-      dEnd.setHours(23, 59, 59, 999);
-      const dateStr = d.toISOString().slice(0, 10);
+    const fallbackDays = parseInt(req.query.days, 10) || 7;
+    const rangeInfo = resolveRangeBounds(req.query.range, fallbackDays);
+    const topupQuery = master('wallet_topups').where('status', 'success');
+    const purchaseQuery = master('wallet_transactions').whereIn('type', ['ppob_purchase']);
 
-      const topupRow = await master('wallet_topups')
-        .where('status', 'success')
-        .whereBetween('paid_at', [d, dEnd])
-        .select(master.raw('COALESCE(SUM(amount), 0) as total, COUNT(*) as cnt'))
-        .first();
-
-      const purchaseRow = await master('wallet_transactions')
-        .whereIn('type', ['ppob_purchase'])
-        .whereBetween('created_at', [d, dEnd])
-        .select(master.raw('COALESCE(SUM(ABS(amount)), 0) as total, COUNT(*) as cnt'))
-        .first();
-
-      rows.push({
-        date: dateStr,
-        totalTopup: parseFloat(topupRow.total || 0),
-        topupCount: parseInt(topupRow.cnt || 0),
-        totalPurchase: parseFloat(purchaseRow.total || 0),
-        purchaseCount: parseInt(purchaseRow.cnt || 0)
-      });
+    if (rangeInfo.start && rangeInfo.end) {
+      const pad = (n) => String(n).padStart(2, '0');
+      const formatSql = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      
+      topupQuery.whereBetween('paid_at', [formatSql(rangeInfo.start), formatSql(rangeInfo.end)]);
+      purchaseQuery.whereBetween('created_at', [formatSql(rangeInfo.start), formatSql(rangeInfo.end)]);
     }
-    res.json({ success: true, data: rows });
+
+    const [topupRows, purchaseRows] = await Promise.all([
+      topupQuery.clone()
+        .select(
+          master.raw('DATE(paid_at) as tanggal'),
+          master.raw('COALESCE(SUM(amount), 0) as total'),
+          master.raw('COUNT(*) as cnt')
+        )
+        .groupBy('tanggal')
+        .orderBy('tanggal', 'asc'),
+      purchaseQuery.clone()
+        .select(
+          master.raw('DATE(created_at) as tanggal'),
+          master.raw('COALESCE(SUM(ABS(amount)), 0) as total'),
+          master.raw('COUNT(*) as cnt')
+        )
+        .groupBy('tanggal')
+        .orderBy('tanggal', 'asc'),
+    ]);
+
+    let startDate = rangeInfo.start;
+    let endDate = rangeInfo.end;
+    if (!startDate || !endDate) {
+      const topupDates = topupRows.map((row) => new Date(row.tanggal));
+      const purchaseDates = purchaseRows.map((row) => new Date(row.tanggal));
+      const allDates = [...topupDates, ...purchaseDates].filter((date) => !Number.isNaN(date.getTime()));
+      if (allDates.length === 0) {
+        startDate = new Date();
+        endDate = new Date();
+      } else {
+        startDate = new Date(Math.min(...allDates.map((date) => date.getTime())));
+        endDate = new Date(Math.max(...allDates.map((date) => date.getTime())));
+      }
+      startDate.setHours(0, 0, 0, 0);
+      endDate.setHours(23, 59, 59, 999);
+    }
+
+    const topupMap = new Map(
+      topupRows.map((row) => [
+        formatDateKey(row.tanggal),
+        { total: toNumber(row.total), count: parseInt(row.cnt || 0, 10) },
+      ])
+    );
+    const purchaseMap = new Map(
+      purchaseRows.map((row) => [
+        formatDateKey(row.tanggal),
+        { total: toNumber(row.total), count: parseInt(row.cnt || 0, 10) },
+      ])
+    );
+
+    const rows = buildDateSeries(startDate, endDate).map((date) => {
+      const dateKey = formatDateKey(date);
+      const topup = topupMap.get(dateKey) || { total: 0, count: 0 };
+      const purchase = purchaseMap.get(dateKey) || { total: 0, count: 0 };
+      return {
+        date: dateKey,
+        totalTopup: topup.total,
+        topupCount: topup.count,
+        totalPurchase: purchase.total,
+        purchaseCount: purchase.count,
+      };
+    });
+
+    res.json({ success: true, range: rangeInfo.key, data: rows });
   } catch (e) {
     console.error('Reconciliation error:', e.message);
     res.status(500).json({ success: false, message: e.message });
