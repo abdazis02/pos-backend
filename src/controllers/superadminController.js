@@ -953,7 +953,7 @@ exports.getTransactions = async (req, res) => {
               THEN CONCAT('ppob_orders-', wt.reference_id)
           END) as ppob_count
         `),
-        master.raw("COALESCE(SUM(CASE WHEN wt.type IN ('transaction_fee', 'ppob_margin', 'ppob_fee') THEN ABS(wt.amount) ELSE 0 END), 0) as total_laba")
+        master.raw("COALESCE(SUM(CASE WHEN wt.type IN ('transaction_fee', 'ppob_margin', 'ppob_fee', 'admin_fee') THEN ABS(wt.amount) ELSE 0 END), 0) as total_laba")
       )
       .first();
 
