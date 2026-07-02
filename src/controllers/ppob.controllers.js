@@ -56,8 +56,6 @@ const emoneyNameCheckSchema = Joi.object({
   customer_no: Joi.string().required(),
 });
 
-const EMONEY_NAME_CHECK_SKUS = ['CDN', 'GOCEK', 'ISKCEK', 'LACEK', 'SPCEK'];
-
 function parseDigiflazzPrice(product) {
   return parseFloat(product?.price || product?.selling_price || product?.nominal || product?.harga || 0);
 }
@@ -207,51 +205,12 @@ const PPOBController = {
         return response.badRequest(res, error.details[0].message, error.details);
       }
 
-      const sku = value.buyer_sku_code.toUpperCase();
-      if (!EMONEY_NAME_CHECK_SKUS.includes(sku)) {
-        return response.badRequest(res, 'SKU cek nama e-money tidak valid');
-      }
-
-      const product = await master('ppob_products')
-        .where('buyer_sku_code', value.buyer_sku_code)
-        .orWhere('buyer_sku_code', sku)
-        .first();
-
-      if (!product || !product.is_active) {
-        return response.badRequest(res, 'Produk cek nama e-money belum aktif');
-      }
-
-      const productName = String(product.product_name || '').toLowerCase();
-      const category = String(product.category || '').toLowerCase();
-      const type = String(product.type || '').toLowerCase();
-      if (!category.includes('e-money') || type !== 'prepaid' || !productName.includes('cek nama')) {
-        return response.badRequest(res, 'Produk cek nama e-money tidak sesuai');
-      }
-
-      const ref_id = `EMC-${req.user.tenant_id}-${Date.now()}`;
-      const result = await Digiflazz.purchase({
-        buyer_sku_code: product.buyer_sku_code,
-        customer_no: value.customer_no,
-        ref_id,
-      });
-      const data = result?.data || result;
-
-      if (!isSuccessfulDigiflazzData(data)) {
-        if (isTemporarySellerIssue(data?.message)) {
-          return response.success(res, {
-            ...data,
-            customer_name: null,
-            name_check_available: false,
-          }, 'Cek nama e-money sementara tidak tersedia');
-        }
-
-        return response.badRequest(res, data?.message || 'Gagal cek nama pengguna e-money');
-      }
-
       return response.success(res, {
-        ...data,
-        name_check_available: true,
-      }, 'Nama pengguna e-money berhasil ditemukan');
+        buyer_sku_code: value.buyer_sku_code,
+        customer_no: value.customer_no,
+        customer_name: null,
+        name_check_available: false,
+      }, 'Cek nama e-money dinonaktifkan');
     } catch (error) {
       return response.error(res, error, 'Gagal cek nama pengguna e-money');
     }
