@@ -19,6 +19,24 @@ function parsePpobRefId(ref_id) {
   };
 }
 
+function parseEmoneyCheckRefId(ref_id) {
+  const match = /^EMC-(\d+)-(.+)$/.exec(ref_id);
+  if (!match) return null;
+  return {
+    tenant_id: parseInt(match[1], 10),
+    key: match[2],
+  };
+}
+
+function parseInquiryRefId(ref_id) {
+  const match = /^INQ-(\d+)-(.+)$/.exec(ref_id);
+  if (!match) return null;
+  return {
+    tenant_id: parseInt(match[1], 10),
+    key: match[2],
+  };
+}
+
 const purchaseSchema = Joi.object({
   buyer_sku_code: Joi.string().required(),
   customer_no: Joi.string().required(),
@@ -475,6 +493,18 @@ const PPOBController = {
       }
 
       console.log(`📡 Processing Webhook for Ref: ${ref_id} | Status: ${status} | RC: ${rc}`);
+
+      const emoneyCheckRef = parseEmoneyCheckRefId(ref_id);
+      if (emoneyCheckRef) {
+        console.log(`ℹ️ Webhook cek nama e-money diterima untuk tenant ${emoneyCheckRef.tenant_id}: ${ref_id}`);
+        return response.success(res, null, 'Webhook cek nama e-money diterima');
+      }
+
+      const inquiryRef = parseInquiryRefId(ref_id);
+      if (inquiryRef) {
+        console.log(`ℹ️ Webhook inquiry diterima untuk tenant ${inquiryRef.tenant_id}: ${ref_id}`);
+        return response.success(res, null, 'Webhook inquiry diterima');
+      }
 
       const parsed = parsePpobRefId(ref_id);
       if (!parsed) {
