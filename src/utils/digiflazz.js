@@ -162,13 +162,12 @@ async function checkInquiry({ buyer_sku_code, customer_no, ref_id, amount }) {
   const inquiryRefId = ref_id || `INQ-${Date.now()}`;
   const payload = {
     commands: 'inq-pasca',
-    buyer_sku_code,
-    customer_no,
+    code: buyer_sku_code,
+    hp: customer_no,
     ref_id: inquiryRefId,
   };
 
   if (amount != null) {
-    payload.amount = amount;
     payload.desc = { amount };
   }
 
