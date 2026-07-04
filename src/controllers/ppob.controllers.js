@@ -783,7 +783,15 @@ const PPOBController = {
           if (rc === '00' || statusLower === 'sukses') {
             newStatus = 'success';
           } else if (['06', '07', '08', '09'].includes(rc) || statusLower === 'gagal') {
-            newStatus = 'failed';
+            // Khusus untuk transaksi PASCABAYAR, Digiflazz sering merespon Gagal (06) 
+            // saat transaksi masih di-proses di awal. Jangan buru-buru gagalkan.
+            // Biarkan Webhook yang memutuskan kalau memang benar-benar gagal.
+            if (isPostpaid && rc === '06') {
+              console.log(`⏳ [AutoCheck] Order ${ref_id} merespon 06 (Gagal) tapi ditahan karena ini Pascabayar`);
+              // Tetap pending
+            } else {
+              newStatus = 'failed';
+            }
           }
 
           if (newStatus !== order.status) {

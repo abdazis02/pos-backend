@@ -258,7 +258,7 @@ async function checkPlnInquiry({ customer_no }) {
 /**
  * Cek Status Transaksi (Polling)
  */
-async function checkTransactionStatus({ ref_id, buyer_sku_code, customer_no, isPostpaid = false }) {
+async function checkTransactionStatus({ ref_id, buyer_sku_code, customer_no, isPostpaid = false, isPostpaidEmoney = false }) {
   if (!ref_id) throw new Error('ref_id wajib diisi untuk cek status');
   return sendDigiflazzRequest('transaction', {
     commands: isPostpaid ? 'status-pasca' : 'check-status',
