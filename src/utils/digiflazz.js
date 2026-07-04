@@ -121,6 +121,8 @@ async function purchase({ buyer_sku_code, customer_no, ref_id, tr_id }) {
     throw new Error('buyer_sku_code, dan customer_no wajib diisi');
   }
 
+  const normalizedTrId = tr_id != null ? String(tr_id).trim() : '';
+
   // Ambil type produk dari DB lokal untuk tentukan prepaid/postpaid
   const master = require('../config/knexMaster');
   const productRow = await master('ppob_products').where({ buyer_sku_code }).first();
@@ -131,12 +133,12 @@ async function purchase({ buyer_sku_code, customer_no, ref_id, tr_id }) {
 
   let payload;
   if (isPostpaid) {
-    if (!tr_id) {
+    if (!normalizedTrId) {
       throw new Error('tr_id wajib diisi untuk pembayaran pascabayar (harus melalui inquiry terlebih dahulu)');
     }
     payload = {
       commands: 'pay-pasca',
-      tr_id,
+      tr_id: normalizedTrId,
     };
   } else {
     payload = {

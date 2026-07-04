@@ -41,7 +41,7 @@ const purchaseSchema = Joi.object({
   buyer_sku_code: Joi.string().required(),
   customer_no: Joi.string().required(),
   sale_price: Joi.number().required(),
-  tr_id: Joi.string().optional(),
+  tr_id: Joi.alternatives().try(Joi.string(), Joi.number()).optional(),
   mitra_markup: Joi.number().optional().default(0), // 🔥 Tambahan: Menangkap Keuntungan Kasir dari Frontend
 });
 
@@ -246,12 +246,19 @@ const PPOBController = {
           });
 
       const data = result?.data || result;
+      const normalizedData = data && typeof data === 'object'
+        ? { ...data }
+        : data;
 
-      if (!isSuccessfulDigiflazzData(data)) {
-        return response.badRequest(res, data?.message || 'Gagal cek tagihan');
+      if (normalizedData && typeof normalizedData === 'object' && !normalizedData.tr_id && normalizedData.tr_id_str) {
+        normalizedData.tr_id = normalizedData.tr_id_str;
       }
 
-      return response.success(res, data, 'Data pelanggan berhasil ditemukan');
+      if (!isSuccessfulDigiflazzData(normalizedData)) {
+        return response.badRequest(res, normalizedData?.message || 'Gagal cek tagihan');
+      }
+
+      return response.success(res, normalizedData, 'Data pelanggan berhasil ditemukan');
     } catch (error) {
       return response.error(res, error, 'Gagal melakukan inquiry PPOB');
     }
@@ -313,7 +320,8 @@ const PPOBController = {
         return response.badRequest(res, 'Harga produk PPOB tidak valid');
       }
 
-      const isPostpaid = !!value.tr_id;
+      const normalizedTrId = value.tr_id != null ? String(value.tr_id).trim() : '';
+      const isPostpaid = normalizedTrId.length > 0;
       // 🔥 LOGIKA BARU PEMOTONGAN SALDO (TANPA FEE 150)
       let piposMargin = parseFloat(dbProduct.margin || 0); // 👈 DIJADIKAN ANGKA
       let beforeBalanceNum = parseFloat(beforeBalance || 0); // 👈 DIJADIKAN ANGKA
@@ -343,7 +351,7 @@ const PPOBController = {
         buyer_sku_code: value.buyer_sku_code,
         customer_no: value.customer_no,
         ref_id,
-        tr_id: value.tr_id,
+        tr_id: normalizedTrId || undefined,
       });
 
       const responseCode = String(result?.rc || result?.response_code || '');
