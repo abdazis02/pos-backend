@@ -96,8 +96,15 @@ function isPostpaidEmoneyProduct(productRow) {
   return productRow.type === 'postpaid' &&
     (category.includes('e-money') ||
       category.includes('emoney') ||
+      category.includes('e-wallet') ||
+      category.includes('ewallet') ||
       brand.includes('e-money') ||
       brand.includes('emoney') ||
+      brand.includes('ovo') ||
+      brand.includes('dana') ||
+      brand.includes('gopay') ||
+      brand.includes('shopeepay') ||
+      brand.includes('linkaja') ||
       productName.includes('bebas nominal'));
 }
 
