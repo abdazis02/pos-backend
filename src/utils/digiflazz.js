@@ -127,7 +127,8 @@ async function purchase({ buyer_sku_code, customer_no, ref_id, tr_id }) {
   const master = require('../config/knexMaster');
   const productRow = await master('ppob_products').where({ buyer_sku_code }).first();
 
-  const isPostpaid = productRow?.type === 'postpaid' ||
+  const isPostpaid = !!normalizedTrId ||
+                     productRow?.type === 'postpaid' ||
                      productRow?.category?.toLowerCase().includes('pascabayar') ||
                      ['PLN PASCABAYAR', 'PDAM', 'BPJS', 'TELKOM'].includes(String(productRow?.brand || '').toUpperCase());
 
