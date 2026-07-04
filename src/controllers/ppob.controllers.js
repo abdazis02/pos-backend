@@ -72,9 +72,15 @@ function isPlnPrepaidProduct(product) {
 }
 
 function isSuccessfulDigiflazzData(data) {
-  const rc = String(data?.rc || '');
+  const rc = String(data?.rc || data?.response_code || '');
   const status = String(data?.status || '').toLowerCase();
-  return rc === '00' || status === 'sukses' || status === 'success' || status === '1';
+  const message = String(data?.message || '').toLowerCase();
+  return rc === '00' ||
+    status === 'sukses' ||
+    status === 'success' ||
+    status === '1' ||
+    message.includes('inquiry success') ||
+    message.includes('payment success');
 }
 
 function isTemporarySellerIssue(message) {
@@ -340,7 +346,10 @@ const PPOBController = {
         tr_id: value.tr_id,
       });
 
-      if (String(result?.rc) !== '00' && String(result?.rc) !== '03') {
+      const responseCode = String(result?.rc || result?.response_code || '');
+      const responseStatus = String(result?.status || result?.message || '').toLowerCase();
+
+      if (responseCode !== '00' && responseCode !== '03' && !responseStatus.includes('success') && !responseStatus.includes('pending') && !responseStatus.includes('proses')) {
         await trxMaster.rollback();
         await trxTenant.rollback();
         return response.badRequest(res, result?.message || 'Gagal membuat order PPOB Digiflazz');
@@ -364,10 +373,10 @@ const PPOBController = {
         price: totalCostForMitra,
         sale_price: value.sale_price,
         status: (() => {
-          const rc = String(result?.rc || '');
-          const statusLower = String(result?.status || '').toLowerCase();
+          const rc = String(result?.rc || result?.response_code || '');
+          const statusLower = String(result?.status || result?.message || '').toLowerCase();
 
-          if (rc === '00' || statusLower === 'sukses') return 'success';
+          if (rc === '00' || statusLower === 'sukses' || statusLower.includes('success')) return 'success';
           if (rc === '03' || statusLower === 'pending' || statusLower === 'proses') return 'pending';
 
           // Jika ada RC tapi bukan sukses/pending, atau status eksplisit gagal

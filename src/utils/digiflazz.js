@@ -167,6 +167,7 @@ async function checkInquiry({ buyer_sku_code, customer_no, ref_id, amount }) {
 
   if (amount != null) {
     payload.amount = amount;
+    payload.desc = { amount };
   }
 
   return sendDigiflazzRequest('transaction', payload);
