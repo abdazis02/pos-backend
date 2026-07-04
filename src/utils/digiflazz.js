@@ -176,6 +176,7 @@ async function purchase({ buyer_sku_code, customer_no, ref_id, tr_id }) {
 
     if (isPostpaidEmoney) {
       payload = {
+        commands: 'pay-pasca',
         buyer_sku_code: buyer_sku_code,
         customer_no,
         ref_id: normalizedTrId,
