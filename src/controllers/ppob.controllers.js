@@ -762,8 +762,10 @@ const PPOBController = {
           const dbProduct = await master('ppob_products').where('buyer_sku_code', order.buyer_sku_code).first();
           
           let isPostpaid = false;
+          let isPostpaidEmoney = false;
           if (dbProduct) {
-            isPostpaid = Digiflazz.isPostpaidEmoneyProduct?.(dbProduct) === true ||
+            isPostpaidEmoney = Digiflazz.isPostpaidEmoneyProduct?.(dbProduct) === true;
+            isPostpaid = isPostpaidEmoney ||
                          dbProduct.type === 'postpaid' ||
                          String(dbProduct.category || '').toLowerCase().includes('pascabayar');
           }
@@ -773,6 +775,7 @@ const PPOBController = {
             buyer_sku_code: order.buyer_sku_code,
             customer_no: order.customer_no,
             isPostpaid,
+            isPostpaidEmoney,
           });
           const digiData = digiResult?.data || digiResult;
 
@@ -782,16 +785,11 @@ const PPOBController = {
           let newStatus = order.status;
           if (rc === '00' || statusLower === 'sukses') {
             newStatus = 'success';
-          } else if (['06', '07', '08', '09'].includes(rc) || statusLower === 'gagal') {
-            // Khusus untuk transaksi PASCABAYAR, Digiflazz sering merespon Gagal (06) 
-            // saat transaksi masih di-proses di awal. Jangan buru-buru gagalkan.
-            // Biarkan Webhook yang memutuskan kalau memang benar-benar gagal.
-            if (isPostpaid && rc === '06') {
-              console.log(`⏳ [AutoCheck] Order ${ref_id} merespon 06 (Gagal) tapi ditahan karena ini Pascabayar`);
-              // Tetap pending
-            } else {
-              newStatus = 'failed';
-            }
+          } else if (['06', '07', '08', '09'].includes(rc) || statusLower === 'gagal' || statusLower === 'gagal (belum lunas)') {
+            // Hindari refund otomatis saat AutoCheck (polling).
+            // Digiflazz sering mengembalikan Gagal (06 dsb) saat awal diproses (race condition).
+            // Hanya Webhook yang berhak mengubah status menjadi FAILED dan me-refund saldo.
+            console.log(`⏳ [AutoCheck] Order ${ref_id} respons ${rc} (Gagal) dari Digiflazz. Menahan status PENDING menunggu Webhook.`);
           }
 
           if (newStatus !== order.status) {
