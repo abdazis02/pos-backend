@@ -102,10 +102,6 @@ function isPostpaidEmoneyProduct(productRow) {
 }
 
 function resolveDigiflazzCode(productRow, buyer_sku_code) {
-  if (isPostpaidEmoneyProduct(productRow)) {
-    return 'emoney';
-  }
-
   return buyer_sku_code;
 }
 
@@ -174,7 +170,7 @@ async function purchase({ buyer_sku_code, customer_no, ref_id, tr_id }) {
     if (isPostpaidEmoney) {
       payload = {
         commands: 'pay-pasca',
-        buyer_sku_code: 'emoney',
+        buyer_sku_code: buyer_sku_code,
         customer_no,
         ref_id: normalizedTrId,
       };
@@ -216,7 +212,7 @@ async function checkInquiry({ buyer_sku_code, customer_no, ref_id, amount }) {
 
     return sendDigiflazzRequest('transaction', {
       commands: 'inq-pasca',
-      buyer_sku_code: 'emoney',
+      buyer_sku_code: buyer_sku_code,
       customer_no,
       ref_id: inquiryRefId,
       amount: Math.trunc(normalizedAmount),
