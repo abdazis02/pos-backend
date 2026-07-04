@@ -83,6 +83,31 @@ function isSuccessfulDigiflazzData(data) {
     message.includes('payment success');
 }
 
+function extractInquiryPayload(result) {
+  const firstLayer = result?.data || result;
+  const payload = firstLayer?.data && typeof firstLayer.data === 'object'
+    ? firstLayer.data
+    : firstLayer;
+
+  if (!payload || typeof payload !== 'object') {
+    return payload;
+  }
+
+  const trIdCandidate =
+    payload.tr_id ??
+    payload.tr_id_str ??
+    payload.transaction_id ??
+    payload.transaction_id_str ??
+    payload.trx_id ??
+    payload.trxid ??
+    null;
+
+  return {
+    ...payload,
+    tr_id: trIdCandidate != null ? String(trIdCandidate).trim() : payload.tr_id,
+  };
+}
+
 function isTemporarySellerIssue(message) {
   const text = String(message || '').toLowerCase();
   return text.includes('cut off') ||
@@ -245,17 +270,23 @@ const PPOBController = {
             amount,
           });
 
-      const data = result?.data || result;
-      const normalizedData = data && typeof data === 'object'
-        ? { ...data }
-        : data;
-
-      if (normalizedData && typeof normalizedData === 'object' && !normalizedData.tr_id && normalizedData.tr_id_str) {
-        normalizedData.tr_id = normalizedData.tr_id_str;
-      }
+      const normalizedData = extractInquiryPayload(result);
 
       if (!isSuccessfulDigiflazzData(normalizedData)) {
         return response.badRequest(res, normalizedData?.message || 'Gagal cek tagihan');
+      }
+
+      const requiresTransactionId =
+        product?.type === 'postpaid' ||
+        String(product?.category || '').toLowerCase().includes('pascabayar') ||
+        String(product?.category || '').toLowerCase().includes('e-money');
+
+      if (requiresTransactionId && (!normalizedData?.tr_id || String(normalizedData.tr_id).trim() === '')) {
+        console.error('Inquiry sukses tetapi tr_id tidak ditemukan:', normalizedData);
+        return response.badRequest(
+          res,
+          'ID inquiry dari Digiflazz tidak ditemukan. Silakan ulangi cek nominal atau cek respons seller.'
+        );
       }
 
       return response.success(res, normalizedData, 'Data pelanggan berhasil ditemukan');
