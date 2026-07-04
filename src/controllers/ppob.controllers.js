@@ -759,7 +759,21 @@ const PPOBController = {
 
       if (order.status === 'pending') {
         try {
-          const digiResult = await Digiflazz.checkTransactionStatus(order.ref_id);
+          const dbProduct = await master('ppob_products').where('buyer_sku_code', order.buyer_sku_code).first();
+          
+          let isPostpaid = false;
+          if (dbProduct) {
+            isPostpaid = Digiflazz.isPostpaidEmoneyProduct?.(dbProduct) === true ||
+                         dbProduct.type === 'postpaid' ||
+                         String(dbProduct.category || '').toLowerCase().includes('pascabayar');
+          }
+
+          const digiResult = await Digiflazz.checkTransactionStatus({
+            ref_id: order.ref_id,
+            buyer_sku_code: order.buyer_sku_code,
+            customer_no: order.customer_no,
+            isPostpaid,
+          });
           const digiData = digiResult?.data || digiResult;
 
           const rc = String(digiData?.rc || '');
