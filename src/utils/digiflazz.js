@@ -86,6 +86,29 @@ function findProductBySku(products, buyer_sku_code) {
   });
 }
 
+function isPostpaidEmoneyProduct(productRow) {
+  if (!productRow) return false;
+
+  const category = String(productRow.category || '').toLowerCase();
+  const brand = String(productRow.brand || '').toLowerCase();
+  const productName = String(productRow.product_name || '').toLowerCase();
+
+  return productRow.type === 'postpaid' &&
+    (category.includes('e-money') ||
+      category.includes('emoney') ||
+      brand.includes('e-money') ||
+      brand.includes('emoney') ||
+      productName.includes('bebas nominal'));
+}
+
+function resolveDigiflazzCode(productRow, buyer_sku_code) {
+  if (isPostpaidEmoneyProduct(productRow)) {
+    return 'emoney';
+  }
+
+  return buyer_sku_code;
+}
+
 async function productList(buyer_sku_code = null) {
   try {
     const prepaidResult = await sendDigiflazzRequest('price-list', {
@@ -112,8 +135,11 @@ async function productList(buyer_sku_code = null) {
 }
 
 async function getProductDetail(buyer_sku_code) {
-  const products = await productList(buyer_sku_code);
-  return findProductBySku(products, buyer_sku_code);
+  const master = require('../config/knexMaster');
+  const productRow = await master('ppob_products').where({ buyer_sku_code }).first();
+  const digiflazzCode = resolveDigiflazzCode(productRow, buyer_sku_code);
+  const products = await productList(digiflazzCode);
+  return findProductBySku(products, digiflazzCode) || findProductBySku(products, buyer_sku_code);
 }
 
 async function purchase({ buyer_sku_code, customer_no, ref_id, tr_id }) {
@@ -126,21 +152,38 @@ async function purchase({ buyer_sku_code, customer_no, ref_id, tr_id }) {
   // Ambil type produk dari DB lokal untuk tentukan prepaid/postpaid
   const master = require('../config/knexMaster');
   const productRow = await master('ppob_products').where({ buyer_sku_code }).first();
+  const productCategory = String(productRow?.category || '').toLowerCase();
+  const productBrand = String(productRow?.brand || '').toUpperCase();
+  const isPostpaidEmoney = isPostpaidEmoneyProduct(productRow);
 
   const isPostpaid = !!normalizedTrId ||
                      productRow?.type === 'postpaid' ||
-                     productRow?.category?.toLowerCase().includes('pascabayar') ||
-                     ['PLN PASCABAYAR', 'PDAM', 'BPJS', 'TELKOM'].includes(String(productRow?.brand || '').toUpperCase());
+                     productCategory.includes('pascabayar') ||
+                     ['PLN PASCABAYAR', 'PDAM', 'BPJS', 'TELKOM'].includes(productBrand);
 
   let payload;
   if (isPostpaid) {
     if (!normalizedTrId) {
-      throw new Error('tr_id wajib diisi untuk pembayaran pascabayar (harus melalui inquiry terlebih dahulu)');
+      throw new Error(
+        isPostpaidEmoney
+          ? 'ref_id inquiry E-Money wajib diisi untuk pembayaran'
+          : 'tr_id wajib diisi untuk pembayaran pascabayar (harus melalui inquiry terlebih dahulu)'
+      );
     }
-    payload = {
-      commands: 'pay-pasca',
-      tr_id: normalizedTrId,
-    };
+
+    if (isPostpaidEmoney) {
+      payload = {
+        commands: 'pay-pasca',
+        buyer_sku_code: 'emoney',
+        customer_no,
+        ref_id: normalizedTrId,
+      };
+    } else {
+      payload = {
+        commands: 'pay-pasca',
+        tr_id: normalizedTrId,
+      };
+    }
   } else {
     payload = {
       cb_url: process.env.URL + '/api/webhook/digiflazz',
@@ -159,11 +202,31 @@ async function purchase({ buyer_sku_code, customer_no, ref_id, tr_id }) {
  * 🔥 Tambahan fungsi Cek Tagihan (Inquiry) khusus Pascabayar
  */
 async function checkInquiry({ buyer_sku_code, customer_no, ref_id, amount }) {
+  const master = require('../config/knexMaster');
+  const productRow = await master('ppob_products').where({ buyer_sku_code }).first();
+
   // ref_id wajib ada agar buildSignature bisa membuat tanda tangan
   const inquiryRefId = ref_id || `INQ-${Date.now()}`;
+
+  if (isPostpaidEmoneyProduct(productRow)) {
+    const normalizedAmount = Number(amount);
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+      throw new Error('amount wajib diisi untuk inquiry E-Money bebas nominal');
+    }
+
+    return sendDigiflazzRequest('transaction', {
+      commands: 'inq-pasca',
+      buyer_sku_code: 'emoney',
+      customer_no,
+      ref_id: inquiryRefId,
+      amount: Math.trunc(normalizedAmount),
+    });
+  }
+
+  const digiflazzCode = resolveDigiflazzCode(productRow, buyer_sku_code);
   const payload = {
     commands: 'inq-pasca',
-    code: buyer_sku_code,
+    code: digiflazzCode,
     hp: customer_no,
     ref_id: inquiryRefId,
   };
@@ -208,3 +271,4 @@ module.exports = {
   checkPlnInquiry,
   checkTransactionStatus, // 🔥 Export fungsi baru
 };
+module.exports.isPostpaidEmoneyProduct = isPostpaidEmoneyProduct;

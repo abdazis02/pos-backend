@@ -37,6 +37,10 @@ function parseInquiryRefId(ref_id) {
   };
 }
 
+function buildPpobRefId(tenant_id, store_id) {
+  return `PPB-${tenant_id}-${store_id}-${Date.now()}`;
+}
+
 const purchaseSchema = Joi.object({
   buyer_sku_code: Joi.string().required(),
   customer_no: Joi.string().required(),
@@ -102,9 +106,12 @@ function extractInquiryPayload(result) {
     payload.trxid ??
     null;
 
+  const refIdCandidate = payload.ref_id ?? payload.refId ?? null;
+
   return {
     ...payload,
     tr_id: trIdCandidate != null ? String(trIdCandidate).trim() : payload.tr_id,
+    ref_id: refIdCandidate != null ? String(refIdCandidate).trim() : payload.ref_id,
   };
 }
 
@@ -255,11 +262,16 @@ const PPOBController = {
       }
 
       const { buyer_sku_code, customer_no, amount } = value;
-      const ref_id = `INQ-${req.user.tenant_id}-${Date.now()}`;
+      const { store_id } = req.params;
 
       const product = await master('ppob_products')
         .where('buyer_sku_code', buyer_sku_code)
         .first();
+
+      const isPostpaidEmoney = Digiflazz.isPostpaidEmoneyProduct?.(product) === true;
+      const ref_id = isPostpaidEmoney
+        ? buildPpobRefId(req.user.tenant_id, store_id)
+        : `INQ-${req.user.tenant_id}-${Date.now()}`;
 
       const result = isPlnPrepaidProduct(product)
         ? await Digiflazz.checkPlnInquiry({ customer_no })
@@ -277,15 +289,25 @@ const PPOBController = {
       }
 
       const requiresTransactionId =
-        product?.type === 'postpaid' ||
-        String(product?.category || '').toLowerCase().includes('pascabayar') ||
-        String(product?.category || '').toLowerCase().includes('e-money');
+        !isPostpaidEmoney &&
+        (
+          product?.type === 'postpaid' ||
+          String(product?.category || '').toLowerCase().includes('pascabayar')
+        );
 
       if (requiresTransactionId && (!normalizedData?.tr_id || String(normalizedData.tr_id).trim() === '')) {
         console.error('Inquiry sukses tetapi tr_id tidak ditemukan:', normalizedData);
         return response.badRequest(
           res,
           'ID inquiry dari Digiflazz tidak ditemukan. Silakan ulangi cek nominal atau cek respons seller.'
+        );
+      }
+
+      if (isPostpaidEmoney && (!normalizedData?.ref_id || String(normalizedData.ref_id).trim() === '')) {
+        console.error('Inquiry E-Money sukses tetapi ref_id tidak ditemukan:', normalizedData);
+        return response.badRequest(
+          res,
+          'Ref inquiry E-Money dari Digiflazz tidak ditemukan. Silakan ulangi cek nominal.'
         );
       }
 
@@ -329,20 +351,33 @@ const PPOBController = {
         return response.notFound(res, 'Owner tenant tidak ditemukan');
       }
 
-      const beforeBalance = await OwnerModel.getBalanceByTenant(trxMaster, tenant_id);
-      const product = await Digiflazz.getProductDetail(value.buyer_sku_code);
-      if (!product) {
-        await trxMaster.rollback();
-        await trxTenant.rollback();
-        return response.badRequest(res, 'Produk PPOB tidak ditemukan pada Digiflazz');
-      }
-
       const dbProduct = await master('ppob_products').where('buyer_sku_code', value.buyer_sku_code).first();
       if (!dbProduct) {
         await trxMaster.rollback();
         await trxTenant.rollback();
         return response.badRequest(res, 'Produk tidak tersinkronisasi di database');
       }
+
+      const isPostpaidEmoney = Digiflazz.isPostpaidEmoneyProduct?.(dbProduct) === true;
+      const normalizedTrId = value.tr_id != null ? String(value.tr_id).trim() : '';
+
+      if (isPostpaidEmoney && normalizedTrId.length === 0) {
+        await trxMaster.rollback();
+        await trxTenant.rollback();
+        return response.badRequest(
+          res,
+          'Ref inquiry E-Money tidak ditemukan. Silakan ulangi cek nominal sebelum bayar.'
+        );
+      }
+
+      const beforeBalance = await OwnerModel.getBalanceByTenant(trxMaster, tenant_id);
+      let product = await Digiflazz.getProductDetail(value.buyer_sku_code);
+      if (!product && !isPostpaidEmoney) {
+        await trxMaster.rollback();
+        await trxTenant.rollback();
+        return response.badRequest(res, 'Produk PPOB tidak ditemukan pada Digiflazz');
+      }
+      product ??= dbProduct;
 
       const price = parseDigiflazzPrice(product);
       if (price < 0) { 
@@ -351,8 +386,11 @@ const PPOBController = {
         return response.badRequest(res, 'Harga produk PPOB tidak valid');
       }
 
-      const normalizedTrId = value.tr_id != null ? String(value.tr_id).trim() : '';
-      const isPostpaid = normalizedTrId.length > 0;
+      const isPostpaid =
+        normalizedTrId.length > 0 ||
+        dbProduct.type === 'postpaid' ||
+        String(dbProduct.category || '').toLowerCase().includes('pascabayar') ||
+        ['PLN PASCABAYAR', 'PDAM', 'BPJS', 'TELKOM'].includes(String(dbProduct.brand || '').toUpperCase());
       // 🔥 LOGIKA BARU PEMOTONGAN SALDO (TANPA FEE 150)
       let piposMargin = parseFloat(dbProduct.margin || 0); // 👈 DIJADIKAN ANGKA
       let beforeBalanceNum = parseFloat(beforeBalance || 0); // 👈 DIJADIKAN ANGKA
@@ -377,7 +415,7 @@ const PPOBController = {
         return response.badRequest(res, 'Saldo deposit tidak mencukupi untuk memproses transaksi PPOB ini');
       }
 
-      const ref_id = `PPB-${tenant_id}-${store_id}-${Date.now()}`;
+      const ref_id = isPostpaidEmoney ? normalizedTrId : buildPpobRefId(tenant_id, store_id);
       const { data: result } = await Digiflazz.purchase({
         buyer_sku_code: value.buyer_sku_code,
         customer_no: value.customer_no,
