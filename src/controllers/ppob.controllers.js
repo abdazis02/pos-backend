@@ -269,6 +269,12 @@ const PPOBController = {
         .first();
 
       const isPostpaidEmoney = Digiflazz.isPostpaidEmoneyProduct?.(product) === true;
+      if (isPostpaidEmoney) {
+        return response.badRequest(
+          res,
+          'E-Money bebas nominal pascabayar sedang dinonaktifkan.'
+        );
+      }
       const ref_id = isPostpaidEmoney
         ? buildPpobRefId(req.user.tenant_id, store_id)
         : `INQ-${req.user.tenant_id}-${Date.now()}`;
@@ -359,6 +365,14 @@ const PPOBController = {
       }
 
       const isPostpaidEmoney = Digiflazz.isPostpaidEmoneyProduct?.(dbProduct) === true;
+      if (isPostpaidEmoney) {
+        await trxMaster.rollback();
+        await trxTenant.rollback();
+        return response.badRequest(
+          res,
+          'E-Money bebas nominal pascabayar sedang dinonaktifkan.'
+        );
+      }
       const normalizedTrId = value.tr_id != null ? String(value.tr_id).trim() : '';
 
       if (isPostpaidEmoney && normalizedTrId.length === 0) {
@@ -613,6 +627,14 @@ const PPOBController = {
 
       const lowerCat = String(category || '').toLowerCase();
 
+      if (lowerCat.includes('e-money bebas') || lowerCat.includes('emoney bebas')) {
+        return response.success(
+          res,
+          { items: [] },
+          'E-Money bebas nominal pascabayar sedang dinonaktifkan'
+        );
+      }
+
       // TAMBAHKAN 4 BARIS INI:
       if (lowerCat.includes('pln token') || lowerCat.includes('token pln')) {
         searchCategory = 'PLN';
@@ -630,9 +652,6 @@ const PPOBController = {
         searchCategory = 'MULTIFINANCE';
       } else if (lowerCat.includes('internet')) {
         searchCategory = 'INTERNET PASCABAYAR';
-      } else if (lowerCat.includes('e-money bebas') || lowerCat.includes('emoney bebas')) {
-        searchCategory = 'E-Money';
-        searchType = 'postpaid';
       } else if (lowerCat.includes('e-money')) {
         searchCategory = 'E-Money';
         searchType = 'prepaid';
