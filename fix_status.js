@@ -1,7 +1,7 @@
 require('dotenv').config();
 const master = require('./src/config/knexMaster');
 const { getTenantConnection } = require('./src/config/knexTenant');
-const OwnerModel = require('./src/models/owner.models');
+const OwnerModel = require('./src/models/owner.model');
 
 async function fixStatus() {
   const refId = 'INQ-63-1784612746015'; // Transaksi SYAHRAWI AHMAD
