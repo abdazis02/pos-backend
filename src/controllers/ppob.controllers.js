@@ -301,6 +301,10 @@ const PPOBController = {
           String(product?.category || '').toLowerCase().includes('pascabayar')
         );
 
+      if (!normalizedData.tr_id && normalizedData.ref_id) {
+        normalizedData.tr_id = normalizedData.ref_id;
+      }
+
       if (requiresTransactionId && (!normalizedData?.tr_id || String(normalizedData.tr_id).trim() === '')) {
         console.error('Inquiry sukses tetapi tr_id tidak ditemukan:', normalizedData);
         return response.badRequest(

@@ -174,19 +174,12 @@ async function purchase({ buyer_sku_code, customer_no, ref_id, tr_id }) {
       );
     }
 
-    if (isPostpaidEmoney) {
-      payload = {
-        commands: 'pay-pasca',
-        buyer_sku_code: buyer_sku_code,
-        customer_no,
-        ref_id: normalizedTrId,
-      };
-    } else {
-      payload = {
-        commands: 'pay-pasca',
-        tr_id: normalizedTrId,
-      };
-    }
+    payload = {
+      commands: 'pay-pasca',
+      buyer_sku_code: buyer_sku_code,
+      customer_no: customer_no,
+      ref_id: normalizedTrId,
+    };
   } else {
     payload = {
       cb_url: process.env.URL + '/api/webhook/digiflazz',
