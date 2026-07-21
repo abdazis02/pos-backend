@@ -433,7 +433,7 @@ const PPOBController = {
         return response.badRequest(res, 'Saldo deposit tidak mencukupi untuk memproses transaksi PPOB ini');
       }
 
-      const ref_id = isPostpaidEmoney ? normalizedTrId : buildPpobRefId(tenant_id, store_id);
+      const ref_id = isPostpaid ? normalizedTrId : buildPpobRefId(tenant_id, store_id);
       const { data: result } = await Digiflazz.purchase({
         buyer_sku_code: value.buyer_sku_code,
         customer_no: value.customer_no,
@@ -565,11 +565,10 @@ const PPOBController = {
 
       const inquiryRef = parseInquiryRefId(ref_id);
       if (inquiryRef) {
-        console.log(`ℹ️ Webhook inquiry diterima untuk tenant ${inquiryRef.tenant_id}: ${ref_id}`);
-        return response.success(res, null, 'Webhook inquiry diterima');
+        console.log(`ℹ️ Webhook inquiry/pascabayar diterima untuk tenant ${inquiryRef.tenant_id}: ${ref_id}`);
       }
 
-      const parsed = parsePpobRefId(ref_id);
+      const parsed = parsePpobRefId(ref_id) || inquiryRef;
       if (!parsed) {
         console.error(`❌ Webhook error: Format Ref ID invalid [${ref_id}]`);
         return response.badRequest(res, 'Format Ref ID Salah');
