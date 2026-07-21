@@ -140,8 +140,11 @@ async function chargeMonthlyFee() {
 
 function startMonthlyFeeJob() {
   setTimeout(() => {
-    console.log('[MonthlyFee] Cek tagihan bulan ini saat startup...');
-    chargeMonthlyFee();
+    // Hanya lakukan catch-up jika server di-restart pada tanggal 1-3 awal bulan
+    if (new Date().getDate() <= 3) {
+      console.log('[MonthlyFee] Cek tagihan bulan ini saat startup (tgl 1-3)...');
+      chargeMonthlyFee();
+    }
   }, INITIAL_DELAY_MS);
 
   try {

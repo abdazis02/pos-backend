@@ -229,8 +229,8 @@ async function checkInquiry({ buyer_sku_code, customer_no, ref_id, amount }) {
   const digiflazzCode = resolveDigiflazzCode(productRow, buyer_sku_code);
   const payload = {
     commands: 'inq-pasca',
-    code: digiflazzCode,
-    hp: customer_no,
+    buyer_sku_code: digiflazzCode,
+    customer_no: customer_no,
     ref_id: inquiryRefId,
   };
 
